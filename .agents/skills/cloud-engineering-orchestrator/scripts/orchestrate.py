@@ -1077,8 +1077,7 @@ def preflight_outputs(plan: dict[str, Any], run_dir: Path, overwrite: bool) -> l
             conflicts.extend(str(path) for path in targets if path.exists())
         elif skill == "cicd-pipeline-creator":
             output_dir = Path(handoff["output_dir"])
-            pipeline = "pipeline.yml" if handoff["platform"] == "github" else "azure-pipeline.yml"
-            targets = [output_dir / pipeline, output_dir / "PIPELINE_NOTES.md"]
+            targets = [output_dir / output for output in handoff.get("outputs", [])]
             conflicts.extend(str(path) for path in targets if path.exists())
         else:
             output_dir = Path(handoff["output_dir"])
