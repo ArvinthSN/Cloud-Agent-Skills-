@@ -21,6 +21,15 @@ def assert_ok(code, msg):
         raise AssertionError(msg)
 
 
+OUTPUT_PATHS = {
+    "azure": "azure-pipeline.yml",
+    "github": "pipeline.yml",
+    "gitlab": ".gitlab-ci.yml",
+    "jenkins": "Jenkinsfile",
+    "circleci": ".circleci/config.yml",
+}
+
+
 def golden_checks():
     examples = [
         ROOT / "examples" / "node-service",
@@ -30,12 +39,12 @@ def golden_checks():
         ROOT / "examples" / "no-tests",
     ]
     for example in examples:
-        for platform in ("azure", "github"):
+        for platform in ("azure", "github", "gitlab", "jenkins", "circleci"):
             with tempfile.TemporaryDirectory() as td:
                 out = Path(td)
                 res = run([sys.executable, str(RENDER), str(example), platform, "--out", str(out)])
                 assert_ok(res.returncode, f"render failed for {example} {platform}: {res.stderr or res.stdout}")
-                pipeline = out / ("azure-pipeline.yml" if platform == "azure" else "pipeline.yml")
+                pipeline = out / OUTPUT_PATHS[platform]
                 assert pipeline.exists(), f"missing pipeline {pipeline}"
                 res2 = run([sys.executable, str(VALIDATE), str(pipeline)])
                 assert_ok(res2.returncode, f"validate failed for {example} {platform}: {res2.stdout}\n{res2.stderr}")
