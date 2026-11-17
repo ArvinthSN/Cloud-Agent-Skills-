@@ -89,3 +89,15 @@ def test_full_commit_sha_action_reference_is_accepted(tmp_path):
     result = run(pipeline)
     assert result.returncode in {0, 2}, result.stdout + result.stderr
     assert '"status": "fail"' not in result.stdout
+
+
+def test_deploy_job_must_exclude_pull_requests_and_target_main(tmp_path):
+    pipeline = tmp_path / "pipeline.yml"
+    unsafe = BASE.replace(
+        "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'",
+        "github.event_name == 'pull_request'",
+    )
+    pipeline.write_text(unsafe, encoding="utf-8")
+    result = run(pipeline)
+    assert result.returncode == 1
+    assert "must exclude pull requests" in result.stdout
