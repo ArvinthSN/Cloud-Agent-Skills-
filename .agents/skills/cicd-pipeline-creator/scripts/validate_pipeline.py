@@ -101,6 +101,7 @@ def validate(path: str):
     lower = text.lower()
     platform = platform_name(path, text)
 
+    parsed_pipeline = None
     if platform == "jenkins":
         required_jenkins = [
             "pipeline {",
@@ -124,13 +125,31 @@ def validate(path: str):
     else:
         if yaml is not None:
             try:
-                parsed = yaml.safe_load(text)
-                if not isinstance(parsed, dict):
+                parsed_pipeline = yaml.safe_load(text)
+                if not isinstance(parsed_pipeline, dict):
                     errors.append("Pipeline YAML root must be a mapping")
             except Exception:
                 errors.append("YAML parse error")
         else:
             warnings.append("YAML parse skipped: PyYAML unavailable")
+
+    if platform == "github" and isinstance(parsed_pipeline, dict):
+        jobs = parsed_pipeline.get("jobs", {})
+        if isinstance(jobs, dict):
+            for job_name, job_config in jobs.items():
+                if "deploy" not in str(job_name).lower() or not isinstance(job_config, dict):
+                    continue
+                condition = str(job_config.get("if", "")).lower()
+                if (
+                    "github.event_name" not in condition
+                    or "pull_request" not in condition
+                    or "!=" not in condition
+                    or "github.ref" not in condition
+                    or "refs/heads/main" not in condition
+                ):
+                    errors.append(
+                        f"Deploy job '{job_name}' must exclude pull requests and target the protected main branch."
+                    )
 
     required = ["build", "scan", "test", "deploy"]
     missing = [item for item in required if item not in lower]
