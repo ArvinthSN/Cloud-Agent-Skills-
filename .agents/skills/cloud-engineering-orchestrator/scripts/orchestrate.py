@@ -163,6 +163,11 @@ def _walk(root: Path) -> tuple[list[dict[str, Any]], bool, int]:
     return records, truncated, total_size
 
 
+def _numeric_version(value: Any, fallback: str) -> str:
+    match = re.search(r"\d+(?:\.\d+)?", str(value or ""))
+    return match.group(0) if match else fallback
+
+
 def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[str, Any]]:
     by_dir: dict[str, set[str]] = {}
     for record in records:
@@ -216,7 +221,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
                 package_data = {}
             scripts = package_data.get("scripts", {}) if isinstance(package_data, dict) else {}
             engines = package_data.get("engines", {}) if isinstance(package_data, dict) else {}
-            version = str(engines.get("node", "22")) if isinstance(engines, dict) else "22"
+            version = _numeric_version(engines.get("node") if isinstance(engines, dict) else None, "22")
             build_cmd = "npm run build" if isinstance(scripts, dict) and scripts.get("build") else None
             test_cmd = "npm test" if isinstance(scripts, dict) and scripts.get("test") else None
             install_cmd = {
@@ -238,7 +243,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
             manifest = next((name for name in ("pyproject.toml", "requirements.txt", "setup.py", "poetry.lock", "uv.lock") if name in names), "unknown")
             pyproject = _read_text(project_root / "pyproject.toml", [MAX_TEXT_BYTES]) if "pyproject.toml" in names else ""
             version_match = re.search(r'requires-python\s*=\s*["\']([^"\']+)', pyproject)
-            version = version_match.group(1) if version_match else "3.12"
+            version = _numeric_version(version_match.group(1), "3.12") if version_match else "3.12"
             packaged = "setup.py" in names or "[build-system]" in pyproject or "[project]" in pyproject
             build_cmd = "python -m build --outdir dist" if packaged else None
             if pm == "uv":
@@ -414,7 +419,14 @@ def scan_project(root: Path) -> dict[str, Any]:
 
 def select_project(projects: list[dict[str, Any]], project_dir: str | None, required: bool) -> dict[str, Any] | None:
     if project_dir is not None:
-        normalized = Path(project_dir).as_posix().strip("./") or "."
+        selected_path = Path(project_dir)
+        if selected_path.is_absolute() or ".." in selected_path.parts:
+            raise OrchestratorError("--project-dir must be a repository-relative path without '..'.")
+        normalized = selected_path.as_posix()
+        if normalized in {"", "."}:
+            normalized = "."
+        elif normalized.startswith("./"):
+            normalized = normalized[2:]
         matches = [item for item in projects if item["dir"] == normalized]
         if len(matches) != 1:
             raise OrchestratorError(f"--project-dir '{project_dir}' matched {len(matches)} projects; detected: {[p['id'] for p in projects]}")
