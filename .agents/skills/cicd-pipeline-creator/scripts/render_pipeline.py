@@ -16,21 +16,32 @@ SUPPORTED = {
 SUPPORTED_LANGUAGES = {"python", "node"}
 
 
-def detect_values(repo: Path, project_dir: str | None = None) -> dict:
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "detect_stack.py"), str(repo)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode:
-        raise SystemExit(f"Stack detection failed: {proc.stderr.strip() or proc.stdout.strip()}")
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"Stack detector returned invalid JSON: {exc}") from exc
+def detect_values(repo: Path, project_dir: str | None = None, context_path: str | None = None) -> dict:
+    if context_path:
+        try:
+            context = json.loads(Path(context_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"Could not load orchestrator handoff context: {exc}") from exc
+        project = context.get("ci_project") if isinstance(context, dict) else None
+        if not isinstance(project, dict):
+            raise SystemExit("Context file must contain a ci_project object.")
+        projects = [project]
+        data = {"projects": projects}
+    else:
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "detect_stack.py"), str(repo)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode:
+            raise SystemExit(f"Stack detection failed: {proc.stderr.strip() or proc.stdout.strip()}")
+        try:
+            data = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Stack detector returned invalid JSON: {exc}") from exc
+        projects = data.get("projects", [])
 
-    projects = data.get("projects", [])
     if project_dir is not None:
         matches = [item for item in projects if item.get("dir") == project_dir]
         if len(matches) != 1:
@@ -138,6 +149,7 @@ def main() -> int:
     parser.add_argument("platform")
     parser.add_argument("--out", default=".")
     parser.add_argument("--project-dir", help="Exact project directory for a monorepo")
+    parser.add_argument("--context", help="Use a precomputed orchestrator ci_project handoff; skip repository re-scan")
     parser.add_argument("--overwrite", action="store_true", help="Allow replacing generated output after review")
     args = parser.parse_args()
 
@@ -151,7 +163,7 @@ def main() -> int:
     template_path = SUPPORTED[platform]
     if not template_path.is_file():
         raise SystemExit(f"Template not found: {template_path}")
-    values = detect_values(repo, args.project_dir)
+    values = detect_values(repo, args.project_dir, args.context)
     rendered = render_template(template_path.read_text(encoding="utf-8"), values)
 
     out_dir = Path(args.out).resolve()
