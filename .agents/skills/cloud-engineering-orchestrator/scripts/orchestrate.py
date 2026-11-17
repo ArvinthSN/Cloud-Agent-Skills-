@@ -23,6 +23,10 @@ SCANNER_VERSION = "1.1"
 SCHEMAS_ROOT = REPO_ROOT / ".agents" / "schemas"
 MAX_TRANSACTION_FILES = 5000
 MAX_TRANSACTION_BYTES = 128 * 1024 * 1024
+STATE_SCHEMA_VERSION = "1.0"
+STATE_FILE = ".execution-state.json"
+LOCK_FILE = ".execution.lock"
+TRANSACTION_DIR = ".transaction"
 MAX_FILES = 5000
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TEXT_BYTES = 64 * 1024
@@ -112,6 +116,29 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise OrchestratorError(f"Expected a JSON object in {path}")
     return value
+
+
+def durable_write_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically persist journal/report state and flush file metadata before returning."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temp.open("w", encoding="utf-8", newline="\\n") as handle:
+            handle.write(canonical_json(value))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            # Some platforms/filesystems do not expose directory fsync.
+            pass
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def git_value(root: Path, *args: str) -> str | None:
@@ -1084,15 +1111,183 @@ def transaction_targets(plan: dict[str, Any], run_dir: Path) -> list[tuple[Path,
     return collapsed
 
 
-class OutputTransaction:
-    """Back up exact generated targets and restore them if any specialist fails."""
 
-    def __init__(self, targets: list[tuple[Path, bool]], run_dir: Path):
+class ExecutionLock:
+    """Cross-platform non-blocking OS lock; the lock file itself is never unlinked."""
+
+    def __init__(self, run_dir: Path):
+        self.run_dir = run_dir.resolve()
+        self.path = self.run_dir / LOCK_FILE
+        self.handle = None
+        self._windows = os.name == "nt"
+
+    def acquire(self) -> None:
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise OrchestratorError(f"Execution lock path must not be a symlink: {self.path}")
+        self.handle = self.path.open("a+", encoding="utf-8")
+        try:
+            self.handle.seek(0, os.SEEK_END)
+            if self.handle.tell() == 0:
+                self.handle.write(" ")
+                self.handle.flush()
+            self.handle.seek(0)
+            if self._windows:
+                import msvcrt
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.handle.seek(0)
+            self.handle.truncate()
+            self.handle.write(json.dumps({
+                "pid": os.getpid(),
+                "acquired_at": utc_now(),
+                "run_dir": str(self.run_dir),
+            }, sort_keys=True))
+            self.handle.flush()
+            os.fsync(self.handle.fileno())
+        except (OSError, BlockingIOError) as exc:
+            self.handle.close()
+            self.handle = None
+            raise OrchestratorError(
+                f"Another orchestrator process holds the execution lock for {self.run_dir}. "
+                "Wait for it to finish or inspect the owning process before retrying."
+            ) from exc
+
+    def release(self) -> None:
+        if self.handle is None:
+            return
+        try:
+            self.handle.seek(0)
+            if self._windows:
+                import msvcrt
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            self.handle.close()
+            self.handle = None
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.release()
+
+
+def state_path(run_dir: Path) -> Path:
+    return run_dir / STATE_FILE
+
+
+def read_run_state(run_dir: Path) -> dict[str, Any]:
+    state = read_json(state_path(run_dir))
+    validate_payload("execution-state.schema.json", state, "execution state")
+    return state
+
+
+def write_run_state(run_dir: Path, state: dict[str, Any]) -> None:
+    state["updated_at"] = utc_now()
+    validate_payload("execution-state.schema.json", state, "execution state")
+    durable_write_json(state_path(run_dir), state)
+
+
+def append_state_event(state: dict[str, Any], event: str, skill: str | None = None, detail: str | None = None) -> None:
+    entry: dict[str, Any] = {"at": utc_now(), "event": event}
+    if skill:
+        entry["skill"] = skill
+    if detail:
+        entry["detail"] = detail[:500]
+    state["events"].append(entry)
+    state["events"] = state["events"][-100:]
+
+
+def create_run_state(plan: dict[str, Any]) -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "run_id": plan["run_id"],
+        "plan_hash": payload_hash(plan),
+        "status": "ready",
+        "attempt": 0,
+        "created_at": now,
+        "updated_at": now,
+        "overwrite_approved": False,
+        "execution_order": list(plan["execution_order"]),
+        "completed_skills": [],
+        "current_skill": None,
+        "transaction": {
+            "phase": "idle",
+            "backup_dir": "",
+            "snapshots": [],
+            "created_directories": [],
+        },
+        "events": [{"at": now, "event": "plan_registered"}],
+    }
+
+
+def _fsync_path(path: Path) -> None:
+    if path.is_file():
+        try:
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        except OSError:
+            pass
+
+
+def _fsync_tree(root: Path) -> None:
+    for current, dirs, names in os.walk(root, followlinks=False):
+        base = Path(current)
+        for name in dirs + names:
+            item = base / name
+            if item.is_symlink():
+                raise OrchestratorError(f"Transaction snapshots do not support symlinks: {item}")
+            if item.is_file():
+                _fsync_path(item)
+        try:
+            directory_fd = os.open(base, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def _validated_backup_dir(run_dir: Path, transaction: dict[str, Any]) -> Path:
+    backup_dir = Path(transaction.get("backup_dir") or (run_dir / TRANSACTION_DIR)).resolve()
+    expected = (run_dir / TRANSACTION_DIR).resolve()
+    if backup_dir != expected or backup_dir.is_symlink():
+        raise OrchestratorError("Execution journal contains an unsafe transaction backup path.")
+    return backup_dir
+
+
+class OutputTransaction:
+    """Durable output transaction with an on-disk snapshot journal for crash recovery."""
+
+    def __init__(
+        self,
+        targets: list[tuple[Path, bool]],
+        run_dir: Path,
+        state: dict[str, Any],
+    ):
         self.targets = targets
-        self.backup_root = Path(tempfile.mkdtemp(prefix=".output-transaction-", dir=run_dir))
-        self.snapshots: list[tuple[Path, Path | None, str]] = []
+        self.run_dir = run_dir.resolve()
+        self.state = state
+        self.backup_root = self.run_dir / TRANSACTION_DIR
         self.created_directories: set[Path] = set()
-        self.finished = False
+
+    def _persist(self) -> None:
+        write_run_state(self.run_dir, self.state)
 
     def _measure_directory(self, path: Path) -> None:
         count = 0
@@ -1117,18 +1312,34 @@ class OutputTransaction:
                     )
 
     def begin(self) -> None:
-        try:
-            for index, (target, expected_directory) in enumerate(self.targets):
-                if target.is_symlink():
-                    raise OrchestratorError(f"Generated output target must not be a symlink: {target}")
-                cursor = target if expected_directory else target.parent
-                while not cursor.exists() and cursor != cursor.parent:
-                    self.created_directories.add(cursor)
-                    cursor = cursor.parent
-                if not target.exists():
-                    self.snapshots.append((target, None, "missing"))
-                    continue
-                backup = self.backup_root / str(index)
+        if self.backup_root.exists() or self.backup_root.is_symlink():
+            raise OrchestratorError(
+                f"Unrecovered transaction data already exists at {self.backup_root}. "
+                "Use recover or resume before starting another execution."
+            )
+        self.state["transaction"] = {
+            "phase": "preparing",
+            "backup_dir": str(self.backup_root),
+            "snapshots": [],
+            "created_directories": [],
+        }
+        append_state_event(self.state, "transaction_preparing")
+        self._persist()
+        self.backup_root.mkdir(parents=True, exist_ok=False)
+        backups_dir = self.backup_root / "backups"
+        backups_dir.mkdir()
+        for index, (target, expected_directory) in enumerate(self.targets):
+            target = Path(os.path.abspath(target))
+            if target.is_symlink():
+                raise OrchestratorError(f"Generated output target must not be a symlink: {target}")
+            cursor = target if expected_directory else target.parent
+            while not cursor.exists() and cursor != cursor.parent:
+                self.created_directories.add(cursor)
+                cursor = cursor.parent
+            if not target.exists():
+                snapshot = {"target": str(target), "backup": None, "kind": "missing"}
+            else:
+                backup = backups_dir / str(index)
                 if target.is_dir():
                     self._measure_directory(target)
                     shutil.copytree(target, backup)
@@ -1140,45 +1351,128 @@ class OutputTransaction:
                     kind = "file"
                 else:
                     raise OrchestratorError(f"Unsupported generated output type: {target}")
-                self.snapshots.append((target, backup, kind))
-        except Exception:
-            shutil.rmtree(self.backup_root, ignore_errors=True)
-            raise
+                _fsync_tree(backup) if backup.is_dir() else _fsync_path(backup)
+                snapshot = {"target": str(target), "backup": str(backup), "kind": kind}
+            self.state["transaction"]["snapshots"].append(snapshot)
+            self.state["transaction"]["created_directories"] = sorted(
+                str(path) for path in self.created_directories
+            )
+            self._persist()
+        self.state["transaction"]["phase"] = "prepared"
+        append_state_event(self.state, "transaction_prepared")
+        self._persist()
 
-    def rollback(self) -> list[str]:
-        if self.finished:
-            return []
+    def mark_running(self) -> None:
+        self.state["transaction"]["phase"] = "running"
+        append_state_event(self.state, "transaction_running")
+        self._persist()
+
+    @staticmethod
+    def restore_from_journal(run_dir: Path, state: dict[str, Any]) -> list[str]:
+        transaction = state["transaction"]
+        backup_root = _validated_backup_dir(run_dir, transaction)
+        snapshots = transaction.get("snapshots", [])
+        transaction["phase"] = "rolling_back"
+        append_state_event(state, "recovery_rollback_started")
+        write_run_state(run_dir, state)
         restored: list[str] = []
-        for target, backup, kind in reversed(self.snapshots):
-            if target.is_symlink() or target.is_file():
-                target.unlink(missing_ok=True)
-            elif target.is_dir():
-                shutil.rmtree(target)
-            if backup is not None:
+        for snapshot in reversed(snapshots):
+            target = Path(snapshot["target"])
+            backup_value = snapshot.get("backup")
+            kind = snapshot["kind"]
+            backup = Path(backup_value) if backup_value else None
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                _remove_path(target)
+            if kind == "file":
+                if backup is None or backup.is_symlink() or not backup.is_file():
+                    raise OrchestratorError(f"Missing transaction backup for file output: {target}")
                 target.parent.mkdir(parents=True, exist_ok=True)
-                if kind == "directory":
-                    shutil.copytree(backup, target)
-                else:
-                    shutil.copy2(backup, target)
-                restored.append(str(target))
-            else:
-                restored.append(str(target))
-        for directory in sorted(self.created_directories, key=lambda item: len(item.parts), reverse=True):
+                staging = target.with_name(f".{target.name}.restore-{uuid.uuid4().hex}")
+                shutil.copy2(backup, staging)
+                _fsync_path(staging)
+                os.replace(staging, target)
+            elif kind == "directory":
+                if backup is None or backup.is_symlink() or not backup.is_dir():
+                    raise OrchestratorError(f"Missing transaction backup for directory output: {target}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staging = target.with_name(f".{target.name}.restore-{uuid.uuid4().hex}")
+                shutil.copytree(backup, staging)
+                _fsync_tree(staging)
+                os.replace(staging, target)
+            elif kind != "missing":
+                raise OrchestratorError(f"Unknown transaction snapshot type: {kind}")
+            restored.append(str(target))
+        for directory_value in sorted(
+            transaction.get("created_directories", []),
+            key=lambda value: len(Path(value).parts),
+            reverse=True,
+        ):
+            directory = Path(directory_value)
             try:
                 directory.rmdir()
             except OSError:
                 pass
-        shutil.rmtree(self.backup_root, ignore_errors=False)
-        self.finished = True
+        transaction["phase"] = "rolled_back"
+        append_state_event(state, "transaction_rolled_back")
+        write_run_state(run_dir, state)
+        shutil.rmtree(backup_root, ignore_errors=False)
         return restored
 
+    @staticmethod
+    def cleanup_committed(run_dir: Path, state: dict[str, Any]) -> None:
+        backup_root = _validated_backup_dir(run_dir, state["transaction"])
+        if backup_root.exists():
+            shutil.rmtree(backup_root)
+
+    def rollback(self) -> list[str]:
+        return self.restore_from_journal(self.run_dir, self.state)
+
     def commit(self) -> None:
-        if not self.finished:
-            shutil.rmtree(self.backup_root, ignore_errors=False)
-            self.finished = True
+        self.state["transaction"]["phase"] = "committed"
+        self.state["status"] = "completed"
+        self.state["current_skill"] = None
+        append_state_event(self.state, "transaction_committed")
+        self._persist()
+        self.cleanup_committed(self.run_dir, self.state)
 
 
-def execute_run(args: argparse.Namespace) -> dict[str, Any]:
+def recover_run_state(run_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    phase = state["transaction"]["phase"]
+    backup_root = _validated_backup_dir(run_dir, state["transaction"])
+    if phase == "committed":
+        if backup_root.exists():
+            shutil.rmtree(backup_root)
+        state["status"] = "completed"
+        append_state_event(state, "committed_backup_cleanup")
+        write_run_state(run_dir, state)
+        return state
+    if phase in {"preparing", "prepared"}:
+        # No specialist is allowed to write before phase=running is durably recorded.
+        if backup_root.exists():
+            shutil.rmtree(backup_root)
+        state["transaction"]["phase"] = "rolled_back"
+        state["transaction"]["snapshots"] = []
+        state["transaction"]["created_directories"] = []
+    elif phase in {"running", "rolling_back", "committing"}:
+        OutputTransaction.restore_from_journal(run_dir, state)
+    elif phase in {"idle", "rolled_back"}:
+        if backup_root.exists():
+            shutil.rmtree(backup_root)
+    else:
+        raise OrchestratorError(f"Cannot recover unknown transaction phase: {phase}")
+    state["status"] = "interrupted"
+    state["current_skill"] = None
+    state["completed_skills"] = []
+    append_state_event(state, "run_interrupted_recovered")
+    write_run_state(run_dir, state)
+    return state
+
+
+
+
+def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     plan_path = run_dir / "execution-plan.json"
     context_path = run_dir / "project-context.json"
@@ -1190,6 +1484,45 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
     _verify_run_fresh(plan, context, run_dir)
     existing_outputs = preflight_outputs(plan, run_dir, args.overwrite)
+
+    journal_path = state_path(run_dir)
+    if journal_path.exists():
+        state = read_run_state(run_dir)
+        if state["run_id"] != plan["run_id"] or state["plan_hash"] != payload_hash(plan):
+            raise OrchestratorError("Execution journal does not match this plan. Do not edit the journal or plan; create a fresh run.")
+        if not resume:
+            raise OrchestratorError(
+                "This run already has an execution journal. Use the resume command to recover or retry it."
+            )
+        if state["status"] == "completed" or state["transaction"]["phase"] == "committed":
+            raise OrchestratorError("This run is already completed and committed; create a new plan for another execution.")
+        recover_run_state(run_dir, state)
+        state = read_run_state(run_dir)
+    else:
+        if resume:
+            raise OrchestratorError("No execution journal exists for this run. Use execute for the first attempt.")
+        state = create_run_state(plan)
+        write_run_state(run_dir, state)
+
+    if state["transaction"]["phase"] not in {"idle", "rolled_back"}:
+        raise OrchestratorError("Execution journal is not in a resumable state. Run recover before retrying.")
+    if existing_outputs and not args.overwrite:
+        raise OrchestratorError("Existing outputs remain after recovery. Review them and pass --overwrite to approve replacement.")
+
+    state["attempt"] += 1
+    state["status"] = "running"
+    state["overwrite_approved"] = bool(args.overwrite)
+    state["execution_order"] = list(plan["execution_order"])
+    state["completed_skills"] = []
+    state["current_skill"] = None
+    state["transaction"] = {
+        "phase": "idle",
+        "backup_dir": str(run_dir / TRANSACTION_DIR),
+        "snapshots": [],
+        "created_directories": [],
+    }
+    append_state_event(state, "execution_attempt_started", detail=f"attempt={state['attempt']}")
+    write_run_state(run_dir, state)
 
     started_at = utc_now()
     skill_results: dict[str, Any] = {}
@@ -1204,14 +1537,18 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     assumptions = list(plan.get("assumptions", []))
     risks: list[str] = []
     manual: list[str] = []
-    transaction = OutputTransaction(transaction_targets(plan, run_dir), run_dir)
-    transaction.begin()
+    transaction = OutputTransaction(transaction_targets(plan, run_dir), run_dir, state)
     try:
+        transaction.begin()
+        transaction.mark_running()
         for skill in plan["execution_order"]:
             handoff_path = run_dir / "handoffs" / skill / "handoff.json"
             handoff = read_json(handoff_path)
             if handoff.get("run_id") != plan.get("run_id") or handoff.get("skill") != skill:
                 raise OrchestratorError(f"Invalid or mismatched handoff for {skill}")
+            state["current_skill"] = skill
+            append_state_event(state, "skill_started", skill)
+            write_run_state(run_dir, state)
             dependencies = plan["dependencies"].get(skill, [])
             failed_dependencies = [
                 dependency for dependency in dependencies
@@ -1233,6 +1570,11 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 result = execute_skill(skill, handoff, run_dir, args.overwrite)
             skill_results[skill] = result
+            if result["status"] == "completed":
+                state["completed_skills"].append(skill)
+            state["current_skill"] = None
+            append_state_event(state, "skill_finished", skill, result["status"])
+            write_run_state(run_dir, state)
             all_checks.extend(result["checks"])
             assumptions.extend(result["assumptions"])
             risks.extend(result["risks"])
@@ -1249,6 +1591,11 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
                 result["artifacts"] = []
             all_artifacts: list[dict[str, str]] = []
             transaction_status = "rolled_back"
+            state["status"] = "failed"
+            state["completed_skills"] = []
+            state["current_skill"] = None
+            append_state_event(state, "execution_attempt_failed", detail="outputs rolled back")
+            write_run_state(run_dir, state)
             all_checks.append(_check(
                 "output-transaction",
                 "PASS",
@@ -1306,15 +1653,58 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
             "finished_at": utc_now(),
         }
         validate_payload("execution-report.schema.json", report, "execution report")
-        write_json(run_dir / "execution-report.json", report)
+        durable_write_json(run_dir / "execution-report.json", report)
         if not needs_rollback:
+            # Commit the journal before deleting backups. Recovery treats committed as final.
             transaction.commit()
         return report
-    except Exception:
-        if not transaction.finished:
-            transaction.rollback()
+    except Exception as exc:
+        phase = state["transaction"]["phase"]
+        if phase in {"running", "rolling_back"}:
+            try:
+                transaction.rollback()
+                state["status"] = "failed"
+                state["current_skill"] = None
+                state["completed_skills"] = []
+                append_state_event(state, "execution_exception_rolled_back", detail=str(exc))
+                write_run_state(run_dir, state)
+            except Exception as rollback_exc:
+                # Keep rolling_back journal and backups for a later recover/resume attempt.
+                raise OrchestratorError(
+                    f"Execution failed ({exc}) and rollback is incomplete ({rollback_exc}). "
+                    "The durable journal is retained; run the recover command before retrying."
+                ) from rollback_exc
         raise
 
+
+def execute_run(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).resolve()
+    with ExecutionLock(run_dir):
+        return _execute_locked(args, resume=False)
+
+
+def resume_run(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).resolve()
+    with ExecutionLock(run_dir):
+        return _execute_locked(args, resume=True)
+
+
+def recover_run(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).resolve()
+    with ExecutionLock(run_dir):
+        if not args.approve:
+            raise OrchestratorError("Recovery restores pre-run files from the durable backup. Pass --approve to continue.")
+        plan = read_json(run_dir / "execution-plan.json")
+        state = read_run_state(run_dir)
+        if state["run_id"] != plan.get("run_id") or state["plan_hash"] != payload_hash(plan):
+            raise OrchestratorError("Execution journal does not match the current plan.")
+        if state["transaction"]["phase"] == "committed":
+            OutputTransaction.cleanup_committed(run_dir, state)
+            state["status"] = "completed"
+            write_run_state(run_dir, state)
+            return state
+        recover_run_state(run_dir, state)
+        return read_run_state(run_dir)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cloud Agent Skills executable orchestrator.")
@@ -1340,6 +1730,15 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--run-dir", required=True)
     execute.add_argument("--approve", action="store_true", help="Approve local file generation described in the plan.")
     execute.add_argument("--overwrite", action="store_true", help="Separately approve replacing existing generated files.")
+
+    resume = subparsers.add_parser("resume", help="Recover an interrupted run and retry from a clean output baseline.")
+    resume.add_argument("--run-dir", required=True)
+    resume.add_argument("--approve", action="store_true", help="Approve recovery and a fresh local generation attempt.")
+    resume.add_argument("--overwrite", action="store_true", help="Separately approve replacing pre-existing output files.")
+
+    recover = subparsers.add_parser("recover", help="Restore project outputs from an interrupted execution journal.")
+    recover.add_argument("--run-dir", required=True)
+    recover.add_argument("--approve", action="store_true", help="Approve restoring the pre-run output snapshot.")
     return parser
 
 
@@ -1359,9 +1758,14 @@ def main() -> int:
                 "next_step": f"python {Path(__file__)} execute --run-dir {Path(args.run_dir).resolve()} --approve",
             }, indent=2))
             return 0
-        report = execute_run(args)
+        if args.command == "resume":
+            report = resume_run(args)
+        elif args.command == "recover":
+            report = recover_run(args)
+        else:
+            report = execute_run(args)
         print(json.dumps(report, indent=2))
-        return 0 if report["status"] == "completed" else 2 if report["status"] == "partial" else 1
+        return 0 if report.get("status") == "completed" else 2 if report.get("status") == "partial" else 1
     except OrchestratorError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

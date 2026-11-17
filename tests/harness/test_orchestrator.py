@@ -348,3 +348,118 @@ def test_runtime_json_schema_validation_rejects_invalid_handoff():
             {"schema_version": "1.1", "skill": "unknown"},
             "skill handoff",
         )
+
+
+
+def test_execution_lock_rejects_a_second_active_runner(tmp_path):
+    run_dir = tmp_path / "locked-run"
+    with orchestrator.ExecutionLock(run_dir):
+        with pytest.raises(orchestrator.OrchestratorError, match="holds the execution lock"):
+            orchestrator.ExecutionLock(run_dir).acquire()
+
+
+def test_execution_lock_releases_after_context_exit(tmp_path):
+    run_dir = tmp_path / "lock-release"
+    with orchestrator.ExecutionLock(run_dir):
+        pass
+    with orchestrator.ExecutionLock(run_dir):
+        pass
+
+
+def test_recover_restores_outputs_after_simulated_process_crash(tmp_path):
+    project = make_node_project(tmp_path / "crash-app")
+    dockerfile = project / "Dockerfile"
+    dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+    run_dir = tmp_path / "crash-run"
+    plan = plan_for(project, run_dir)
+    state = orchestrator.create_run_state(plan)
+    orchestrator.write_run_state(run_dir, state)
+
+    transaction = orchestrator.OutputTransaction(
+        orchestrator.transaction_targets(plan, run_dir), run_dir, state
+    )
+    transaction.begin()
+    transaction.mark_running()
+    dockerfile.write_text("FROM node:latest\n", encoding="utf-8")
+    (project / ".dockerignore").write_text(".env\n", encoding="utf-8")
+    (project / ".github" / "workflows").mkdir(parents=True)
+    (project / ".github" / "workflows" / "pipeline.yml").write_text("bad: true\n", encoding="utf-8")
+    state["status"] = "running"
+    state["current_skill"] = "app-containerizer"
+    orchestrator.write_run_state(run_dir, state)
+
+    args = orchestrator.build_parser().parse_args([
+        "recover", "--run-dir", str(run_dir), "--approve",
+    ])
+    recovered = orchestrator.recover_run(args)
+    assert recovered["status"] == "interrupted"
+    assert recovered["transaction"]["phase"] == "rolled_back"
+    assert dockerfile.read_text(encoding="utf-8") == "FROM scratch\n"
+    assert not (project / ".dockerignore").exists()
+    assert not (project / ".github" / "workflows").exists()
+    assert not (run_dir / orchestrator.TRANSACTION_DIR).exists()
+
+
+def test_resume_recovers_crash_then_restarts_all_skills_from_clean_state(tmp_path, monkeypatch):
+    project = make_node_project(tmp_path / "resume-app")
+    original = project / "Dockerfile"
+    original.write_text("FROM scratch\n", encoding="utf-8")
+    run_dir = tmp_path / "resume-run"
+    plan = plan_for(project, run_dir)
+    state = orchestrator.create_run_state(plan)
+    orchestrator.write_run_state(run_dir, state)
+    tx = orchestrator.OutputTransaction(orchestrator.transaction_targets(plan, run_dir), run_dir, state)
+    tx.begin()
+    tx.mark_running()
+    original.write_text("PARTIAL WRITE\n", encoding="utf-8")
+    (project / ".dockerignore").write_text("PARTIAL\n", encoding="utf-8")
+    state["status"] = "running"
+    state["current_skill"] = "app-containerizer"
+    orchestrator.write_run_state(run_dir, state)
+
+    executed = []
+
+    def successful_skill(skill, handoff, current_run_dir, overwrite):
+        executed.append(skill)
+        if skill == "app-containerizer":
+            assert original.read_text(encoding="utf-8") == "FROM scratch\n"
+            original.write_text("FROM node:22\n", encoding="utf-8")
+            (project / ".dockerignore").write_text(".env\n", encoding="utf-8")
+        else:
+            assert original.read_text(encoding="utf-8") == "FROM node:22\n"
+            pipeline = project / ".github" / "workflows" / "pipeline.yml"
+            pipeline.parent.mkdir(parents=True, exist_ok=True)
+            pipeline.write_text("name: generated\n", encoding="utf-8")
+            (project / "PIPELINE_NOTES.md").write_text("notes\n", encoding="utf-8")
+        return {
+            "status": "completed",
+            "artifacts": [],
+            "checks": [{"name": f"{skill}-test", "status": "PASS", "detail": "ok"}],
+            "assumptions": [],
+            "risks": [],
+            "manual_actions": [],
+        }
+
+    monkeypatch.setattr(orchestrator, "execute_skill", successful_skill)
+    args = orchestrator.build_parser().parse_args([
+        "resume", "--run-dir", str(run_dir), "--approve", "--overwrite",
+    ])
+    report = orchestrator.resume_run(args)
+    assert executed == ["app-containerizer", "cicd-pipeline-creator"]
+    assert report["status"] == "completed"
+    assert report["transaction"]["status"] == "committed"
+    final_state = orchestrator.read_run_state(run_dir)
+    assert final_state["attempt"] == 1
+    assert final_state["status"] == "completed"
+    assert final_state["completed_skills"] == ["app-containerizer", "cicd-pipeline-creator"]
+    assert not (run_dir / orchestrator.TRANSACTION_DIR).exists()
+
+
+def test_resume_rejects_a_tampered_or_mismatched_journal(tmp_path):
+    project = make_node_project(tmp_path / "tamper-journal")
+    run_dir = tmp_path / "tamper-run"
+    plan_for(project, run_dir)
+    state = orchestrator.create_run_state(json.loads((run_dir / "execution-plan.json").read_text(encoding="utf-8")))
+    state["run_id"] = "00000000-0000-0000-0000-000000000000"
+    with pytest.raises(orchestrator.OrchestratorError, match="Invalid execution state"):
+        orchestrator.write_run_state(run_dir, state)

@@ -13,6 +13,7 @@ def test_execution_schemas_are_valid_json_and_versioned():
         "execution-report.schema.json",
         "skill-handoff.schema.json",
         "project-context.schema.json",
+        "execution-state.schema.json",
     ):
         schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
         assert schema["$schema"].endswith("/2020-12/schema")
@@ -57,3 +58,20 @@ def test_production_orchestration_contracts_are_documented():
     assert "rolled back" in content
     assert "--no-cache" in content
     assert "Draft 2020-12" in content
+
+
+
+def test_execution_state_contract_covers_lock_recovery_and_resume():
+    schema = json.loads((SCHEMAS / "execution-state.schema.json").read_text(encoding="utf-8"))
+    assert schema["properties"]["status"]["enum"] == [
+        "ready", "running", "interrupted", "failed", "completed"
+    ]
+    assert schema["properties"]["transaction"]["properties"]["phase"]["enum"] == [
+        "idle", "preparing", "prepared", "running", "committing",
+        "rolling_back", "rolled_back", "committed"
+    ]
+    orchestrator = ROOT / ".agents" / "skills" / "cloud-engineering-orchestrator" / "scripts" / "orchestrate.py"
+    source = orchestrator.read_text(encoding="utf-8")
+    assert "class ExecutionLock" in source
+    assert "def resume_run" in source
+    assert "def recover_run" in source
