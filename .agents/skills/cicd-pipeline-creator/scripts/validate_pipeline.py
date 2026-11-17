@@ -113,7 +113,7 @@ def validate(path: str):
 
     # GitHub Actions references are executable dependencies. Require a full immutable
     # commit SHA; mutable tags and branches are not acceptable in generated workflows.
-    action_refs = re.findall(r"^\\s*uses\\s*:\\s*['\"]?([^\\s'\"]+)['\"]?\\s*$", text, re.M | re.I)
+    action_refs = re.findall(r"^\s*uses\s*:\s*['"]?([^\s'"]+)['"]?\s*$", text, re.M | re.I)
     for action_ref in action_refs:
         if action_ref.startswith(("./", "docker://")):
             continue
