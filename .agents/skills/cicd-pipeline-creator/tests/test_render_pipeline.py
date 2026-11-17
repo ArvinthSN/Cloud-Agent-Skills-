@@ -41,3 +41,37 @@ def test_no_tests_pipeline_contains_explicit_fail_or_override_guard(tmp_path):
     assert "NO_TESTS_DETECTED" in pipeline
     assert "ALLOW_NO_TESTS" in pipeline
     assert "No tests detected" in pipeline
+
+
+
+def test_java_stack_is_rejected_by_current_renderer(tmp_path):
+    project = tmp_path / "java-app"
+    project.mkdir()
+    (project / "pom.xml").write_text(
+        "<project><modelVersion>4.0.0</modelVersion></project>",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    result = run(project, "github", "--out", out)
+    assert result.returncode != 0
+    assert "supports Python and Node.js only" in result.stderr + result.stdout
+    assert not (out / "pipeline.yml").exists()
+
+
+def test_project_without_real_build_is_rejected(tmp_path):
+    project = tmp_path / "no-build"
+    project.mkdir()
+    (project / "package.json").write_text(
+        '{"name":"no-build","scripts":{"start":"node server.js"}}',
+        encoding="utf-8",
+    )
+    (project / "package-lock.json").write_text(
+        '{"name":"no-build","lockfileVersion":3,"requires":true,"packages":{"":{"name":"no-build","version":"1.0.0"}}}',
+        encoding="utf-8",
+    )
+    (project / "server.js").write_text('console.log("ready");\n', encoding="utf-8")
+    out = tmp_path / "out"
+    result = run(project, "github", "--out", out)
+    assert result.returncode != 0
+    assert "artifact-producing build" in result.stderr + result.stdout
+    assert not (out / "pipeline.yml").exists()
