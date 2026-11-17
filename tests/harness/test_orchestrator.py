@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -230,3 +231,42 @@ def test_output_preflight_prevents_partial_multi_skill_generation(tmp_path):
     assert not (project / ".dockerignore").exists()
     assert not (project / ".github" / "workflows" / "pipeline.yml").exists()
     assert not (project / "PIPELINE_NOTES.md").exists()
+
+
+
+def test_cli_plan_and_execute_commands_work_end_to_end(tmp_path):
+    project = make_node_project(tmp_path / "cli-app")
+    run_dir = tmp_path / "cli-run"
+    planned = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), "plan",
+            "--project", str(project),
+            "--goal", "Verify documented CLI commands",
+            "--skills", "app-containerizer",
+            "--run-dir", str(run_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert planned.returncode == 0, planned.stderr
+    plan_payload = json.loads(planned.stdout)
+    assert plan_payload["approval_required"] is True
+    assert Path(plan_payload["plan"]).is_file()
+
+    executed = subprocess.run(
+        [
+            sys.executable, str(SCRIPT), "execute",
+            "--run-dir", str(run_dir),
+            "--approve",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert executed.returncode == 0, executed.stderr + executed.stdout
+    report = json.loads(executed.stdout)
+    assert report["status"] == "completed"
+    assert report["skill"] == "cloud-engineering-orchestrator"
+    assert report["overwrite_approved"] is False
+    assert (project / "Dockerfile").is_file()
