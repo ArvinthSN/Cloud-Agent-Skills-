@@ -206,3 +206,25 @@ def test_database_engine_is_allowlisted(tmp_path):
     plan = InfraPlan(provider="gcp", architecture="monolithic", needs_database=True, db_engine='postgres" }')
     with pytest.raises(ValueError, match="Unsupported database engine"):
         generate_project(tmp_path / "infra", plan, project_name="demo")
+
+
+@pytest.mark.parametrize("provider", SUPPORTED_PROVIDERS)
+def test_generated_terraform_passes_native_validation_when_cli_available(tmp_path, provider):
+    import shutil
+
+    if not shutil.which("terraform"):
+        pytest.skip("Terraform CLI is installed only in the dedicated Terraform validation CI job.")
+
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, provider)
+    output = tmp_path / provider / "native-infra"
+    generate_project(output, plan, project_name="native-check")
+
+    result = validate_terraform.validate(output)
+    assert result.terraform_available is True
+    assert result.policy_ok is True
+    assert result.fmt_ok is True, json.dumps(result.to_dict(), indent=2)
+    assert result.init_ok is True, json.dumps(result.to_dict(), indent=2)
+    assert result.validate_ok is True, json.dumps(result.to_dict(), indent=2)
+    assert result.success is True, json.dumps(result.to_dict(), indent=2)
