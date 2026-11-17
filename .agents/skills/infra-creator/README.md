@@ -1,77 +1,61 @@
 # infra-creator (Multi-Cloud)
 
-Generate production-oriented Terraform IaC for **AWS**, **Azure**, and **GCP** from application repositories.
+Generate production-oriented Terraform IaC for AWS, Azure and GCP from application repositories.
 
 ## Providers
 
 | Provider | Compute | Database | Registry |
-|----------|---------|----------|----------|
+|---|---|---|---|
 | AWS | ECS Fargate + ALB | RDS | ECR |
 | Azure | Container Apps | PostgreSQL Flexible Server | ACR |
 | GCP | Cloud Run | Cloud SQL | Artifact Registry |
 
-## Quick Start
+## Quick start
 
-```bash
-# Scan
-python scripts/scan_repository.py /path/to/app --json -o /tmp/scan.json
+Plan only; choose aws, azure or gcp:
 
-# Analyze architecture
-python scripts/analyze_architecture.py /tmp/scan.json -o /tmp/arch.json
+    python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output /path/to/app/infra --project-name myapp --plan-only
 
-# Plan (no files written) — choose provider
-python scripts/generate_terraform.py \
-  --scan /tmp/scan.json --arch /tmp/arch.json \
-  --provider aws \          # or azure | gcp
-  --output /path/to/app/infra \
-  --project-name myapp \
-  --plan-only
+Generate only after reviewing and approving the plan:
 
-# Generate after approval
-python scripts/generate_terraform.py \
-  --scan /tmp/scan.json --arch /tmp/arch.json \
-  --provider aws \
-  --output /path/to/app/infra \
-  --project-name myapp
+    python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output /path/to/app/infra --project-name myapp --approve
 
-# Validate
-python scripts/validate_terraform.py /path/to/app/infra
-```
+Validate (requires Terraform CLI):
+
+    python scripts/validate_terraform.py /path/to/app/infra
+
+Add --overwrite only after reviewing an existing non-empty output directory.
 
 ## Layout
 
-```
-infra-creator/
-├── SKILL.md
-├── scripts/           # scan, analyze, generate, validate
-├── architecture-patterns/
-├── references/        # per-cloud service mappings + standards
-├── templates/
-│   ├── aws/
-│   ├── azure/
-│   └── gcp/
-├── examples/
-└── tests/
-```
+    infra-creator/
+    ├── SKILL.md
+    ├── scripts/
+    ├── architecture-patterns/
+    ├── references/
+    ├── templates/
+    │   ├── aws/
+    │   ├── azure/
+    │   └── gcp/
+    ├── examples/
+    └── tests/
 
 ## Principles
 
-- Evidence-based architecture detection
-- Only justified resources
-- Human approval before generation
-- No auto-apply, no credential hardcoding
-- Private networking and encrypted databases by default
+- Evidence-based architecture detection.
+- Generate only justified resources.
+- Require human approval before writing.
+- Never auto-apply or hardcode credentials.
+- Prefer private networking and encrypted databases.
 
 ## Testing
 
-```bash
-pytest tests/ -v
-```
+    pytest tests/ -v
 
-## Limitations (v1)
+## Limitations
 
-- Container-focused compute modules (ECS / Container Apps / Cloud Run)
-- Serverless detection exists; dedicated Lambda/Functions modules can be extended later
-- Terraform CLI required for validation (not for generation)
-- Does not run `terraform apply` or push to GitHub
-```
+- Current compute modules are container-focused (ECS, Container Apps and Cloud Run).
+- Serverless is detected but generation is blocked until dedicated function modules exist.
+- Terraform CLI is required for validation, but not for planning.
+- Generation requires --approve; non-empty output directories require --overwrite.
+- The generator never runs terraform apply or pushes to GitHub.

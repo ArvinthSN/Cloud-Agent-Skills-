@@ -1,6 +1,6 @@
 ---
 name: infra-creator
-description: Generate production-ready Terraform IaC for AWS, Azure, or GCP from application repositories. Use when the user asks to create infrastructure, Terraform configs, cloud resources for an app, analyze a repo for infra needs, or run infra-creator. Supports monolithic, microservices, serverless, and event-driven architectures across three clouds.
+description: Generate production-ready Terraform IaC for AWS, Azure, or GCP from application repositories. Use when the user asks to create infrastructure, Terraform configs, cloud resources for an app, analyze a repo for infra needs, or run infra-creator. Supports container-focused monolithic, microservices and hybrid architectures across three clouds. Serverless detection is advisory; serverless generation is not implemented.
 ---
 
 # Infra-Creator Skill (Multi-Cloud)
@@ -19,9 +19,13 @@ Do **not** use for pure application code generation or CI/CD pipelines.
 
 | Provider | Status | Primary compute | Primary database |
 |----------|--------|-----------------|------------------|
-| AWS | Full | ECS Fargate | RDS |
-| Azure | Full | Container Apps / AKS-ready | Azure Database for PostgreSQL |
-| GCP | Full | Cloud Run | Cloud SQL |
+| AWS | Template-backed, validate per project | ECS Fargate | RDS |
+| Azure | Template-backed, validate per project | Container Apps | Azure Database for PostgreSQL |
+| GCP | Template-backed, validate per project | Cloud Run | Cloud SQL |
+
+## Shared harness and context discipline
+
+Follow AGENTS.md and the shared contracts in .agents/standards/. Load only the architecture pattern and provider mappings needed for the selected task. Reuse a valid scan and architecture handoff; re-scan only if the target or relevant project revision changed. Keep evidence summaries bounded and link to generated artifacts rather than repeating full files.
 
 ## Execution Workflow (Strict Order)
 
@@ -34,13 +38,13 @@ Do **not** use for pure application code generation or CI/CD pipelines.
 7. Select reusable modules from `templates/<provider>/`.
 8. **Present a clear infrastructure plan** (provider, resources, why needed).
 9. Wait for explicit user approval of the plan.
-10. Run `scripts/generate_terraform.py --provider <provider>` → write Terraform into `<repo>/infra/`.
+10. Run `scripts/generate_terraform.py --plan-only` first. After approval, pass `--approve`; pass `--overwrite` only after explicit overwrite approval.
 11. Run `scripts/validate_terraform.py` on the generated project.
 12. Fix obvious generation issues if validation fails.
 13. Generate/update `infra/README.md` with usage instructions.
 14. Present final output location and exact Terraform CLI commands.
 
-Never run `terraform apply` or `terraform destroy`. Never push to GitHub. Never hardcode credentials or secrets.
+Generation requires `--approve`. Existing non-empty output directories are preserved unless `--overwrite` is explicitly passed. Never run `terraform apply` or `terraform destroy`. Never push to GitHub. Never hardcode credentials or secrets.
 
 ## Key Scripts
 
@@ -61,7 +65,7 @@ Never run `terraform apply` or `terraform destroy`. Never push to GitHub. Never 
 ## Terraform Generation Rules
 
 - Generate only justified resources for the chosen provider.
-- Copy and parameterize modules from `templates/<provider>/{networking,compute,database}/`.
+- Copy and parameterize only existing templates from `templates/<provider>/{networking,compute,database}/`. Current compute modules are container-focused; serverless plans must stop rather than emit container modules.
 - Always produce: `main.tf`, `providers.tf`, `versions.tf`, `variables.tf`, `outputs.tf`, `terraform.tfvars.example`, environment dirs, and `README.md`.
 - Follow `references/terraform-standards.md` and `references/security-guidelines.md`.
 - Prefer private networking, least-privilege identity, encryption, and remote state recommendations.

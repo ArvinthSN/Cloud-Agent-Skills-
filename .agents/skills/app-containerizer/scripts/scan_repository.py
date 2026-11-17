@@ -3,10 +3,15 @@
 import argparse, json, re
 from pathlib import Path
 
-SKIP={".git",".venv","venv","node_modules","__pycache__",".pytest_cache","dist","build","target",".idea"}
+SKIP={".git",".venv","venv","node_modules","__pycache__",".pytest_cache",".mypy_cache",".ruff_cache",".terraform","vendor","dist","build","target","coverage","htmlcov",".next",".cache",".idea",".vscode"}
+MAX_FILES = 5000
 def scan(repo):
     paths=[]
     for p in repo.rglob("*"):
+        if len(paths) >= MAX_FILES:
+            break
+        if p.is_symlink():
+            continue
         if p.is_file() and not any(part in SKIP for part in p.relative_to(repo).parts):
             paths.append(p.relative_to(repo).as_posix())
     low=[x.lower() for x in paths]
@@ -43,7 +48,7 @@ def scan(repo):
         dependency=next(x for x in paths if Path(x).name in ("pom.xml","build.gradle","build.gradle.kts"))
         manager="maven" if "pom.xml" in low else "gradle"; runtime="21"
     services=[]
-    for name,pattern in (("postgresql",r"postgres|postgresql"),("mysql",r"\\bmysql\\b"),("redis",r"\\bredis\\b")):
+    for name,pattern in (("postgresql",r"postgres|postgresql"),("mysql",r"\bmysql\b"),("redis",r"\bredis\b")):
         if re.search(pattern,text): services.append(name)
     return {"repository":str(repo.resolve()),"project_type":stack,"framework":framework,"package_manager":manager,
       "dependency_file":dependency,"entry_point":entry,"runtime_version":runtime,
@@ -51,12 +56,12 @@ def scan(repo):
       "existing_compose":any(Path(x).name.lower() in ("compose.yaml","compose.yml","docker-compose.yml","docker-compose.yaml") for x in paths),
       "env_files_detected":[x for x in paths if Path(x).name.startswith(".env")],
       "detected_services":services,"compose_required":bool(services),"file_count":len(paths),
-      "confidence":"high" if framework!="unknown" else "low","files_sample":paths[:250]}
+      "confidence":"high" if framework!="unknown" else "low","scan_truncated":len(paths)>=MAX_FILES,"scan_limit":MAX_FILES,"files_sample":paths[:250]}
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--path",required=True); ap.add_argument("--output")
     a=ap.parse_args(); repo=Path(a.path)
     if not repo.is_dir(): ap.error("path must be an existing directory")
     result=json.dumps(scan(repo),indent=2)
-    if a.output: Path(a.output).write_text(result+"\\n")
+    if a.output: Path(a.output).write_text(result+"\n")
     print(result)
 if __name__=="__main__": main()

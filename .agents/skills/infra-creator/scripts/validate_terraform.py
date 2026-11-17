@@ -9,6 +9,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,29 +57,41 @@ def validate(project_dir: Path) -> ValidationResult:
 
     result.terraform_available = True
 
-    code, _, err = run_cmd([tf, "fmt", "-recursive", "-check"], cwd=project_dir)
-    if code == 0:
-        result.fmt_ok = True
-        result.messages.append("terraform fmt: OK")
-    else:
-        code2, _, err2 = run_cmd([tf, "fmt", "-recursive"], cwd=project_dir)
-        result.fmt_ok = code2 == 0
-        result.messages.append("terraform fmt: reformatted" if code2 == 0 else f"fmt failed: {err or err2}")
+    # Run init/validate against an isolated copy so checks never create .terraform,
+    # lock files, state, or other validation artifacts in the user's output folder.
+    try:
+        with tempfile.TemporaryDirectory(prefix="infra-creator-validate-") as temp_dir:
+            validation_dir = Path(temp_dir) / "project"
+            shutil.copytree(
+                project_dir,
+                validation_dir,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(".git", ".terraform", "*.tfstate", "*.tfstate.*", "*.tfplan"),
+            )
 
-    code, out, err = run_cmd([tf, "init", "-backend=false", "-input=false", "-no-color"], cwd=project_dir)
-    result.init_ok = code == 0
-    result.messages.append("terraform init -backend=false: OK" if code == 0 else f"init failed:\n{err or out}")
-    if not result.init_ok:
-        result.errors.append(err or out)
+            code, out, err = run_cmd([tf, "fmt", "-recursive", "-check"], cwd=validation_dir)
+            result.fmt_ok = code == 0
+            result.messages.append("terraform fmt -check: OK" if code == 0 else f"terraform fmt -check failed: {err or out}")
+            if not result.fmt_ok:
+                result.errors.append(err or out or "terraform fmt check failed; run terraform fmt -recursive manually.")
 
-    if result.init_ok:
-        code, out, err = run_cmd([tf, "validate", "-no-color"], cwd=project_dir)
-        result.validate_ok = code == 0
-        result.messages.append("terraform validate: OK" if code == 0 else f"validate failed:\n{err or out}")
-        if not result.validate_ok:
-            result.errors.append(err or out)
-    else:
-        result.validate_ok = False
+            code, out, err = run_cmd([tf, "init", "-backend=false", "-input=false", "-no-color"], cwd=validation_dir)
+            result.init_ok = code == 0
+            result.messages.append("terraform init -backend=false: OK" if code == 0 else f"terraform init failed:\\n{err or out}")
+            if not result.init_ok:
+                result.errors.append(err or out or "terraform init failed")
+
+            if result.init_ok:
+                code, out, err = run_cmd([tf, "validate", "-no-color"], cwd=validation_dir)
+                result.validate_ok = code == 0
+                result.messages.append("terraform validate: OK" if code == 0 else f"terraform validate failed:\\n{err or out}")
+                if not result.validate_ok:
+                    result.errors.append(err or out or "terraform validate failed")
+            else:
+                result.validate_ok = False
+    except OSError as exc:
+        result.errors.append(f"Could not prepare isolated validation workspace: {exc}")
+        result.messages.append("Validation NOT RUN because the project could not be copied safely.")
 
     result.success = bool(result.fmt_ok and result.init_ok and result.validate_ok)
     if result.success:
@@ -103,7 +116,8 @@ def main() -> int:
             logger.info("%s", m)
         for e in result.errors:
             logger.error("%s", e)
-    return 0 if result.success or not result.terraform_available else 1
+    # A missing Terraform CLI is NOT_RUN and must not look like a successful validation.
+    return 0 if result.success else 1
 
 
 if __name__ == "__main__":

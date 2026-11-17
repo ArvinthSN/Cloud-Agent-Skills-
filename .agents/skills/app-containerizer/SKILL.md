@@ -7,6 +7,12 @@ description: Inspect application repositories and generate secure Docker artifac
 ## Purpose
 Convert an existing application repository into a reproducible container setup and generate the Docker assets needed to build, run, and validate the app in containers.
 
+## Shared harness and context discipline
+
+Follow repository-wide rules in AGENTS.md and the shared contracts in .agents/standards/. Load only references needed for the detected stack. Reuse a valid scan report instead of scanning the same repository twice. Keep output summaries compact and report unknowns explicitly.
+
+The final report uses the shared check states: PASS, FAIL, WARNING, SKIPPED and NOT_RUN. Missing Docker is NOT_RUN, not PASS.
+
 ## Workflow
 1. Inspect the repository using `scripts/scan_repository.py`.
 2. Analyze the scan using `scripts/analyze_application.py`.

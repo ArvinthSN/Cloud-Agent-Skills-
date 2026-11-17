@@ -85,7 +85,14 @@ jobs:
       - name: Run tests
         env:
           ALLOW_NO_TESTS: ${{ vars.ALLOW_NO_TESTS }}
-        run: @@TEST_CMD@@                   # no tests detected -> render emits warning + fail unless ALLOW_NO_TESTS=true
+        run: |
+          if [ '@@TEST_CMD@@' = 'NO_TESTS_DETECTED' ]; then
+            echo "::warning::No tests detected."
+            if [ "$ALLOW_NO_TESTS" = "true" ]; then exit 0; fi
+            echo "::error::No tests detected. Add tests or set ALLOW_NO_TESTS=true."
+            exit 1
+          fi
+          @@TEST_CMD@@
         working-directory: @@WORKING_DIR@@
       - if: always()
         uses: actions/upload-artifact@v4

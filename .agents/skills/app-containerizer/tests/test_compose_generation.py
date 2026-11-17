@@ -5,3 +5,17 @@ def test_compose_explicit_service(tmp_path):
     f=tmp_path/'plan.json'; f.write_text(json.dumps({'stack':'python','port':8000}))
     p=subprocess.run([sys.executable,str(ROOT/'scripts/generate_compose.py'),'--path',str(tmp_path),'--plan',str(f),'--services','postgresql','--approve'],capture_output=True,text=True)
     assert p.returncode==0 and 'postgres:16' in (tmp_path/'compose.yaml').read_text()
+
+def test_compose_uses_real_line_breaks_and_healthchecks(tmp_path):
+    f = tmp_path / "plan.json"
+    f.write_text(json.dumps({"stack": "python", "port": 8000}))
+    p = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/generate_compose.py"), "--path", str(tmp_path),
+         "--plan", str(f), "--services", "postgresql,redis", "--approve"],
+        capture_output=True, text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    content = (tmp_path / "compose.yaml").read_text(encoding="utf-8")
+    assert "\\n" not in content
+    assert content.count("\n") > 5
+    assert "condition: service_healthy" in content

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/execution-report.schema.json",
+  "title": "Cloud Agent Skills execution report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "skill", "artifacts", "checks", "assumptions", "risks", "manual_actions"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "status": { "enum": ["completed", "blocked", "failed", "partial", "not_started"] },
+    "skill": { "type": "string", "minLength": 1 },
+    "project_revision": { "type": ["string", "null"] },
+    "detected": { "type": "object" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "type", "action", "purpose"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "minLength": 1 },
+          "action": { "enum": ["created", "updated", "preserved"] },
+          "purpose": { "type": "string" }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "enum": ["PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN"] },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "risks": { "type": "array", "items": { "type": "string" } },
+    "manual_actions": { "type": "array", "items": { "type": "string" } }
+  }
+}

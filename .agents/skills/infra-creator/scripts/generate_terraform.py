@@ -98,10 +98,16 @@ def build_plan(scan: dict[str, Any], arch: dict[str, Any], provider: str) -> Inf
     return plan
 
 
-def _copy_module(src: Path, dest: Path) -> None:
+def _copy_module(src: Path, dest: Path, *, overwrite: bool = False) -> None:
+    """Copy a module without deleting user data unless overwrite is explicit."""
     if not src.is_dir():
         raise FileNotFoundError(f"Template module not found: {src}")
     if dest.exists():
+        if not overwrite:
+            raise FileExistsError(
+                f"Module directory already exists: {dest}. "
+                "Choose a new output directory or explicitly enable overwrite."
+            )
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
 
@@ -320,6 +326,8 @@ def generate_project(
     plan: InfraPlan,
     project_name: str = "app",
     region: str | None = None,
+    *,
+    overwrite: bool = False,
 ) -> None:
     provider = plan.provider
     if provider not in SUPPORTED_PROVIDERS:
@@ -329,16 +337,38 @@ def generate_project(
     region = region or defaults[provider]
 
     output_dir = output_dir.resolve()
+    if plan.compute_type == "serverless":
+        raise ValueError(
+            "Serverless generation is not implemented yet. "
+            "The current templates are container-focused; do not generate a container module for a serverless plan."
+        )
+    if plan.needs_compute and not plan.needs_network:
+        raise ValueError(
+            "The selected compute templates require networking, but the plan disables networking. "
+            "Revise the plan or select a supported network-attached architecture."
+        )
+    if plan.needs_database and not plan.needs_network:
+        raise ValueError("The selected database templates require a networking module.")
+    if provider == "aws" and plan.needs_database and not plan.needs_compute:
+        raise ValueError("The AWS database template requires the compute module security group.")
+    if output_dir.exists():
+        existing = [p.name for p in output_dir.iterdir()]
+        if existing and not overwrite:
+            raise FileExistsError(
+                f"Output directory is not empty: {output_dir}. "
+                "Choose a new directory or pass --overwrite after reviewing existing files."
+            )
+    output_dir.mkdir(parents=True, exist_ok=True)
     modules_dir = output_dir / "modules"
     modules_dir.mkdir(parents=True, exist_ok=True)
     tmpl = TEMPLATES / provider
 
     if plan.needs_network:
-        _copy_module(tmpl / "networking" / "network", modules_dir / "networking")
+        _copy_module(tmpl / "networking" / "network", modules_dir / "networking", overwrite=overwrite)
     if plan.needs_compute:
-        _copy_module(tmpl / "compute" / "container", modules_dir / "compute")
+        _copy_module(tmpl / "compute" / "container", modules_dir / "compute", overwrite=overwrite)
     if plan.needs_database:
-        _copy_module(tmpl / "database" / "sql", modules_dir / "database")
+        _copy_module(tmpl / "database" / "sql", modules_dir / "database", overwrite=overwrite)
 
     _write(output_dir / "versions.tf", _versions_block(provider, project_name, region))
     region_var = "aws_region" if provider == "aws" else ("location" if provider == "azure" else "region")
@@ -630,6 +660,8 @@ def main() -> int:
     parser.add_argument("--project-name", default="app")
     parser.add_argument("--region", default=None)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--approve", action="store_true", help="Required to write generated Terraform files")
+    parser.add_argument("--overwrite", action="store_true", help="Allow replacement of files in a non-empty output directory")
     args = parser.parse_args()
 
     try:
@@ -639,11 +671,14 @@ def main() -> int:
         print(json.dumps(plan.to_dict(), indent=2))
         if args.plan_only:
             return 0
+        if not args.approve:
+            raise PermissionError("No files written. Re-run with --approve after reviewing the plan.")
         generate_project(
             Path(args.output),
             plan,
             project_name=args.project_name,
             region=args.region,
+            overwrite=args.overwrite,
         )
     except Exception as exc:
         logger.error("%s", exc)

@@ -1,0 +1,44 @@
+name: Repository quality
+
+on:
+  push:
+    branches: [main, "review/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest pyyaml
+      - name: Compile skill scripts
+        run: python -m compileall -q .agents/skills
+      - name: Validate shared contracts
+        run: pytest -q tests/harness
+      - name: Test application containerizer
+        run: pytest -q .agents/skills/app-containerizer/tests
+      - name: Test infrastructure creator
+        run: pytest -q .agents/skills/infra-creator/tests
+      - name: Test CI/CD renderer
+        run: pytest -q .agents/skills/cicd-pipeline-creator/tests
+      - name: Test CI/CD examples
+        run: python .agents/skills/cicd-pipeline-creator/scripts/test_examples.py

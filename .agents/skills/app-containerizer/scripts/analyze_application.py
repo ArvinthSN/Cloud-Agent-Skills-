@@ -23,6 +23,6 @@ def analyze(d):
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--input",required=True); ap.add_argument("--output")
     a=ap.parse_args(); plan=analyze(json.loads(Path(a.input).read_text())); out=json.dumps(plan,indent=2)
-    if a.output: Path(a.output).write_text(out+"\\n")
+    if a.output: Path(a.output).write_text(out+"\n")
     print(out)
 if __name__=="__main__": main()

@@ -1,6 +1,6 @@
 ---
 name: cicd-pipeline-creator
-description: Create, improve or review a CI/CD pipeline (GitHub Actions, Azure DevOps, GitLab CI, Jenkins, CircleCI) from a repo and its tests. Detects the stack, renders a vetted platform template (build, scan, test, deploy), validates it, and writes terse notes. Use for any request about pipelines, CI/CD, workflows, build or deploy automation.
+description: Create, improve or review a CI/CD pipeline (currently generated for GitHub Actions and Azure DevOps) from a repo and its tests. Detects the stack, renders a vetted platform template (build, scan, test, deploy), validates it, and writes terse notes. Use for any request about pipelines, CI/CD, workflows, build or deploy automation.
 ---
 
 # CI/CD Pipeline Creator
@@ -10,15 +10,15 @@ description: Create, improve or review a CI/CD pipeline (GitHub Actions, Azure D
 | --- | --- | --- | --- |
 | github | templates/github/pipeline.yml | .github/workflows/pipeline.yml | supported |
 | azure | templates/azure/azure-pipelines.yml | azure-pipelines.yml | supported |
-| gitlab | templates/gitlab/.gitlab-ci.yml | .gitlab-ci.yml | experimental |
-| jenkins | templates/jenkins/Jenkinsfile | Jenkinsfile | supported |
-| circleci | templates/circleci/config.yml | .circleci/config.yml | experimental |
+| gitlab | templates/gitlab/.gitlab-ci.yml | .gitlab-ci.yml | starter asset; renderer not integrated |
+| jenkins | templates/jenkins/Jenkinsfile | Jenkinsfile | starter asset; renderer not integrated |
+| circleci | templates/circleci/config.yml | .circleci/config.yml | starter asset; renderer not integrated |
 
 ## Workflow
 1. `python scripts/detect_stack.py <repo>` (compact JSON, one entry per project `dir`).
-2. Platform = the single entry in `ci_platforms`. Several or none: ask ONE question. Never guess.
+2. Platform = the single entry in `ci_platforms`. Map `github-actions` to `github` and `azure-devops` to `azure`. Several or none: ask ONE question. Never guess.
 3. Read only the matching headings in `references/stacks.md` and `references/platforms/<platform>.md`. Never read whole folders. Never re-read a file.
-4. `python scripts/render_pipeline.py <repo> <platform> --out <dir>`. Fill leftover markers only from detect output or documented defaults.
+4. `python scripts/render_pipeline.py <repo> <platform> --out <dir>`. For monorepos pass `--project-dir <detected-dir>`; the renderer must not silently choose the first project. Use `--overwrite` only after explicit approval. Fill leftover markers only from detect output or documented defaults.
 5. `python scripts/validate_pipeline.py <file>`. Fix only what failed. Run once more. Stop after the second run.
 6. Write the pipeline to its output path and a terse `PIPELINE_NOTES.md`. Do not commit or push.
 
@@ -33,7 +33,7 @@ description: Create, improve or review a CI/CD pipeline (GitHub Actions, Azure D
 - Never write a pipeline from memory. Start from the template and fill `@@MARKERS@@` only.
 - Template missing: STOP and report it. Never recreate it.
 - Raw templates are not valid YAML or Groovy. Validate rendered output only.
-- Render per project `dir` in a monorepo. Drop setup steps for languages not detected.
+- Render one explicitly selected project `dir` in a monorepo. Never silently select the first project. Drop setup steps for languages not detected.
 - Existing pipeline: merge and keep its custom steps. List breaking changes. Ask only before overwriting.
 - Never mix syntax across platforms.
 
