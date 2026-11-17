@@ -15,6 +15,7 @@ jobs:
             - deps-
       - run:
           name: Install and build
+          no_output_timeout: 20m
           command: |
             set -eu
             cd "@@WORKING_DIR@@"
@@ -42,11 +43,13 @@ jobs:
       - setup_remote_docker
       - run:
           name: Secret scan
+          no_output_timeout: 20m
           command: |
             docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:@@GITLEAKS_VERSION@@ \
               detect --source /repo --redact --exit-code 1
       - run:
           name: Filesystem and dependency scan
+          no_output_timeout: 20m
           command: |
             docker run --rm -v "$PWD:/repo" aquasec/trivy:@@TRIVY_VERSION@@ \
               fs --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed /repo
@@ -64,6 +67,7 @@ jobs:
             - deps-
       - run:
           name: Run tests
+          no_output_timeout: 20m
           command: |
             set -eu
             cd "@@WORKING_DIR@@"
@@ -91,6 +95,7 @@ jobs:
           at: .
       - run:
           name: Verify artifact and keep deployment disabled
+          no_output_timeout: 10m
           command: |
             test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
             DEPLOY_ENABLED="${DEPLOY_ENABLED:-false}"
