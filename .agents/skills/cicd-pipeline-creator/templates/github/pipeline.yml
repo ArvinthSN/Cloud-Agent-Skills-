@@ -1,6 +1,6 @@
 # Source: reviewed GitHub Actions starter and official publisher examples
 # Fetched: @@FETCH_DATE@@   Template revision: @@UPSTREAM_REF@@
-# TODO(verify): pin third-party action tags to immutable SHAs before production use
+# Third-party actions are pinned to immutable commit SHAs; refresh pins through reviewed releases.
 name: CI pipeline
 
 on:
@@ -25,20 +25,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Set up Python
         if: env.PROJECT_LANGUAGE == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '@@PYTHON_VERSION@@'
       - name: Set up Node.js
         if: env.PROJECT_LANGUAGE == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '@@NODE_VERSION@@'
-      - uses: actions/cache@v4
+      - uses: actions/cache@8ff5423e8b66eacab4e638ee52abbd2cb831366a # v5.0.1
         with:
           path: @@CACHE_PATH@@
           key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
@@ -52,7 +52,7 @@ jobs:
         run: |
           test -d '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
           test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@615b319bd27bb32c3d64dca6b6ed6974d5fbe653 # v6.0.0
         with:
           name: build-${{ github.run_id }}
           path: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
@@ -63,15 +63,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: gitleaks/gitleaks-action@v2 # TODO(verify): pin immutable SHA; license may be required
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0 # TODO(verify): pin immutable SHA; license may be required
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-      - uses: aquasecurity/trivy-action@0.28.0 # TODO(verify): pin immutable SHA
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 # TODO(verify): pin immutable SHA
         with:
           scan-type: fs
           severity: HIGH,CRITICAL
@@ -83,20 +83,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Set up Python
         if: env.PROJECT_LANGUAGE == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '@@PYTHON_VERSION@@'
       - name: Set up Node.js
         if: env.PROJECT_LANGUAGE == 'node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '@@NODE_VERSION@@'
-      - uses: actions/cache@v4
+      - uses: actions/cache@8ff5423e8b66eacab4e638ee52abbd2cb831366a # v5.0.1
         with:
           path: @@CACHE_PATH@@
           key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
@@ -123,7 +123,7 @@ jobs:
     timeout-minutes: 5
     environment: production
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@0d2ec9d4cbcefe257d822f108de2a1f15f8da9f6 # v7.0.0
         with:
           name: build-${{ github.run_id }}
           path: ./artifact
