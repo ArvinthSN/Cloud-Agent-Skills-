@@ -459,10 +459,15 @@ def test_resume_rejects_a_tampered_or_mismatched_journal(tmp_path):
     project = make_node_project(tmp_path / "tamper-journal")
     run_dir = tmp_path / "tamper-run"
     plan_for(project, run_dir)
-    state = orchestrator.create_run_state(json.loads((run_dir / "execution-plan.json").read_text(encoding="utf-8")))
+    plan = json.loads((run_dir / "execution-plan.json").read_text(encoding="utf-8"))
+    state = orchestrator.create_run_state(plan)
     state["run_id"] = "00000000-0000-0000-0000-000000000000"
-    with pytest.raises(orchestrator.OrchestratorError, match="Invalid execution state"):
-        orchestrator.write_run_state(run_dir, state)
+    orchestrator.write_run_state(run_dir, state)
+    args = orchestrator.build_parser().parse_args([
+        "resume", "--run-dir", str(run_dir), "--approve",
+    ])
+    with pytest.raises(orchestrator.OrchestratorError, match="does not match this plan"):
+        orchestrator.resume_run(args)
 
 
 

@@ -837,8 +837,8 @@ def _verify_run_fresh(
         raise OrchestratorError("Project root mismatch between execution plan and context.")
     if payload_hash(context) != plan["project"].get("context_hash"):
         raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
+    root = Path(plan["project"]["root"]).resolve()
     if verify_project:
-        root = Path(plan["project"]["root"]).resolve()
         cache_config = plan.get("workflow", {}).get("context_cache", {})
         current = scan_project(
             root,
