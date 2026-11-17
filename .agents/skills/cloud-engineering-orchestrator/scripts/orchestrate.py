@@ -31,7 +31,8 @@ SKIP_DIRS = {
 MANIFEST_NAMES = {
     "package.json", "pyproject.toml", "requirements.txt", "setup.py",
     "poetry.lock", "uv.lock", "pom.xml", "build.gradle", "build.gradle.kts",
-    "go.mod", "Cargo.toml", "Gemfile", "composer.json",
+    "go.mod", "Cargo.toml", "Gemfile", "composer.json", "package-lock.json",
+    "pnpm-lock.yaml", "yarn.lock", "go.sum", "Cargo.lock",
 }
 SKILL_NAMES = {
     "app-containerizer",
