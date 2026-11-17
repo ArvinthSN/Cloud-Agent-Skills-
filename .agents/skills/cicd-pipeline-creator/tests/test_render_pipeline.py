@@ -144,3 +144,85 @@ def test_precomputed_orchestrator_context_skips_repository_discovery(tmp_path):
     rendered = (out / "pipeline.yml").read_text(encoding="utf-8")
     assert "npm ci" in rendered
     assert "npm run build" in rendered
+
+
+def test_all_five_platforms_render_and_pass_static_validation(tmp_path):
+    outputs = {
+        "github": "pipeline.yml",
+        "azure": "azure-pipeline.yml",
+        "gitlab": ".gitlab-ci.yml",
+        "jenkins": "Jenkinsfile",
+        "circleci": ".circleci/config.yml",
+    }
+    example = EXAMPLES / "node-service"
+    for platform, relative_output in outputs.items():
+        target_dir = tmp_path / platform
+        result = run(example, platform, "--out", target_dir)
+        assert result.returncode == 0, result.stderr + result.stdout
+        pipeline = target_dir / relative_output
+        assert pipeline.is_file(), f"{platform} output missing: {pipeline}"
+        text = pipeline.read_text(encoding="utf-8")
+        assert "@@" not in text
+        assert "npm ci" in text
+        assert "npm run build" in text
+        checked = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "validate_pipeline.py"), str(pipeline), "--json"],
+            capture_output=True,
+            text=True,
+        )
+        assert checked.returncode in {0, 2}, checked.stdout + checked.stderr
+        assert '"status": "fail"' not in checked.stdout
+
+
+def test_renderer_rejects_newline_in_shell_command(tmp_path):
+    import json
+
+    project = tmp_path / "newline-command"
+    project.mkdir()
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({
+            "ci_project": {
+                "dir": ".",
+                "lang": "node",
+                "pm": "npm",
+                "install": "npm ci",
+                "build": "npm run build\\necho injected",
+                "test": "npm test",
+                "version": "20",
+                "lockfile": "package-lock.json",
+                "has_tests": True,
+            }
+        }),
+        encoding="utf-8",
+    )
+    result = run(project, "gitlab", "--out", tmp_path / "out", "--context", context)
+    assert result.returncode != 0
+    assert "Unsafe or oversized build command" in result.stderr + result.stdout
+
+
+def test_renderer_rejects_unsafe_working_directory(tmp_path):
+    import json
+
+    project = tmp_path / "unsafe-path"
+    project.mkdir()
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps({
+            "ci_project": {
+                "dir": "../escape",
+                "lang": "node",
+                "pm": "npm",
+                "install": "npm ci",
+                "build": "npm run build",
+                "test": "npm test",
+                "version": "20",
+                "lockfile": "package-lock.json",
+                "has_tests": True,
+            }
+        }),
+        encoding="utf-8",
+    )
+    result = run(project, "jenkins", "--out", tmp_path / "out", "--context", context)
+    assert result.returncode != 0
+    assert "Unsafe project working directory" in result.stderr + result.stdout
