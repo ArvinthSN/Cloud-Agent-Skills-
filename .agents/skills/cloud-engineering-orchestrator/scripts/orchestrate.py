@@ -980,8 +980,10 @@ def execute_skill(skill: str, handoff: dict[str, Any], run_dir: Path, overwrite:
         write_json(context_path, {"ci_project": handoff["ci_project"]})
         renderer = SKILLS_ROOT / skill / "scripts" / "render_pipeline.py"
         platform = handoff["platform"]
-        pipeline_name = "pipeline.yml" if platform == "github" else "azure-pipeline.yml"
-        pipeline_path = output_dir / pipeline_name
+        pipeline_outputs = handoff.get("outputs", [])
+        if not pipeline_outputs:
+            raise OrchestratorError(f"CI handoff for {platform} does not declare its pipeline output.")
+        pipeline_path = output_dir / pipeline_outputs[0]
         notes_path = output_dir / "PIPELINE_NOTES.md"
         existed = {pipeline_path: pipeline_path.exists(), notes_path: notes_path.exists()}
         command = [sys.executable, str(renderer), str(project_root), platform, "--out", str(output_dir), "--context", str(context_path)]
@@ -1007,9 +1009,15 @@ def execute_skill(skill: str, handoff: dict[str, Any], run_dir: Path, overwrite:
             risks.extend(payload.get("errors", []))
             risks.extend(payload.get("warnings", []))
         if platform == "github":
-            manual.append("Review action versions and configure repository variables. Deployment stays disabled until a target-specific job is implemented.")
-        else:
+            manual.append("Review action SHAs and configure repository variables. Deployment stays disabled until a target-specific job is implemented.")
+        elif platform == "azure":
             manual.append("Review Azure task versions and configure protected pipeline variables/service connections. Target-specific deployment needs a separate review.")
+        elif platform == "gitlab":
+            manual.append("Run CI Lint in the target GitLab instance and configure protected environments/OIDC before enabling deployment.")
+        elif platform == "jenkins":
+            manual.append("Validate on the target Jenkins controller, configure required plugins/credentials and protect production approval.")
+        else:
+            manual.append("Run CircleCI config validation and configure restricted contexts before enabling target-specific deployment.")
         return {"status": "completed" if vstatus == "pass" else "partial" if vstatus == "warning" else "failed", "artifacts": artifacts, "checks": checks, "assumptions": assumptions, "risks": risks, "manual_actions": manual}
 
     # infra-creator
