@@ -66,11 +66,10 @@ def static_security_policy(project_dir: Path) -> list[str]:
                 if len(terraform_files) > 500 or total_bytes > 20 * 1024 * 1024:
                     raise ValueError("Terraform policy scan exceeds its safety limit (500 files / 20 MiB).")
 
-    combined = "\\n".join(
+    combined = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
         for path in sorted(terraform_files)
     )
-    lower = combined.lower()
     findings: list[str] = []
 
     def require(condition: bool, message: str) -> None:
@@ -78,7 +77,7 @@ def static_security_policy(project_dir: Path) -> list[str]:
             findings.append(message)
 
     require(
-        not re.search(r'''(?i)image\\s*=\\s*["'][^"']+:latest["']''', combined),
+        not re.search(r'''(?i)image\s*=\s*["'][^"']+:latest["']''', combined),
         "Mutable :latest container image references are prohibited; use a SHA-256 digest.",
     )
     if 'resource "aws_ecr_repository"' in combined:
@@ -88,33 +87,34 @@ def static_security_policy(project_dir: Path) -> list[str]:
         )
     if 'resource "azurerm_container_registry"' in combined:
         require(
-            re.search(r"(?im)^\\s*admin_enabled\\s*=\\s*false\\s*$", combined) is not None,
+            re.search(r"(?im)^\s*admin_enabled\s*=\s*false\s*$", combined) is not None,
             "Azure Container Registry admin credentials must be disabled.",
         )
         require(
-            'role_definition_name = "AcrPull"' in combined and 'identity_ids = [azurerm_user_assigned_identity.' in combined,
+            'role_definition_name = "AcrPull"' in combined
+            and 'identity_ids = [azurerm_user_assigned_identity.' in combined,
             "Azure container apps must use managed identity and AcrPull rather than registry admin credentials.",
         )
     if 'member   = "allUsers"' in combined or 'member = "allUsers"' in combined:
         require(
-            re.search(r"(?im)^\\s*count\\s*=\\s*var\\.allow_unauthenticated\\s*\\?\\s*1\\s*:\\s*0\\s*$", combined) is not None
-            and re.search(r'''(?is)variable\\s+"allow_unauthenticated"\\s*\\{[^}]*default\\s*=\\s*false''', combined) is not None,
+            re.search(r"(?im)^\s*count\s*=\s*var\.allow_unauthenticated\s*\?\s*1\s*:\s*0\s*$", combined) is not None
+            and re.search(r'''(?is)variable\s+"allow_unauthenticated"\s*\{[^}]*default\s*=\s*false''', combined) is not None,
             "Unauthenticated Cloud Run access must be opt-in and default to false.",
         )
     if 'resource "azurerm_postgresql_flexible_server"' in combined:
         require(
-            re.search(r"(?im)^\\s*public_network_access_enabled\\s*=\\s*false\\s*$", combined) is not None
+            re.search(r"(?im)^\s*public_network_access_enabled\s*=\s*false\s*$", combined) is not None
             and "delegated_subnet_id" in combined
             and "private_dns_zone_id" in combined,
             "Azure PostgreSQL must use delegated private networking, private DNS and public access disabled.",
         )
     if 'resource "aws_lb_listener" "http"' in combined:
         require(
-            re.search(r'''(?is)resource\\s+"aws_lb_listener"\\s+"https"\\s*\\{[^}]*protocol\\s*=\\s*"HTTPS"[^}]*certificate_arn\\s*=\\s*var\\.certificate_arn''', combined) is not None,
+            re.search(r'''(?is)resource\s+"aws_lb_listener"\s+"https"\s*\{[^}]*protocol\s*=\s*"HTTPS"[^}]*certificate_arn\s*=\s*var\.certificate_arn''', combined) is not None,
             "Public AWS load balancers must configure an HTTPS listener with an explicit ACM certificate.",
         )
         require(
-            re.search(r'''(?is)resource\\s+"aws_lb_listener"\\s+"http"\\s*\\{.*?protocol\\s*=\\s*"HTTPS".*?status_code\\s*=\\s*"HTTP_301"''', combined) is not None,
+            re.search(r'''(?is)resource\s+"aws_lb_listener"\s+"http"\s*\{.*?protocol\s*=\s*"HTTPS".*?status_code\s*=\s*"HTTP_301"''', combined) is not None,
             "AWS HTTP listeners must redirect to HTTPS instead of forwarding plaintext traffic.",
         )
     if 'variable "container_image"' in combined:
@@ -126,17 +126,13 @@ def static_security_policy(project_dir: Path) -> list[str]:
     return findings
 
 
+
 def validate(project_dir: Path) -> ValidationResult:
+    redef validate(project_dir: Path) -> ValidationResult:
     result = ValidationResult(success=False, terraform_available=False)
     project_dir = project_dir.resolve()
     if not project_dir.is_dir():
         result.errors.append(f"Project directory does not exist: {project_dir}")
-        return result
-
-    tf = shutil.which("terraform")
-    if not tf:
-        result.errors.append("Terraform CLI not found on PATH.")
-        result.messages.append("Skipping validation — install Terraform >= 1.5.")
         return result
 
     try:
@@ -154,8 +150,8 @@ def validate(project_dir: Path) -> ValidationResult:
 
     tf = shutil.which("terraform")
     if not tf:
-        result.terraform_available = False
         result.messages.append("Terraform CLI unavailable; fmt/init/validate are NOT_RUN.")
+        result.errors.append("Terraform CLI not found on PATH.")
         return result
 
     result.terraform_available = True
@@ -202,8 +198,7 @@ def validate(project_dir: Path) -> ValidationResult:
     return result
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate a generated Terraform project")
+scription="Validate a generated Terraform project")
     parser.add_argument("path")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("-o", "--output")
