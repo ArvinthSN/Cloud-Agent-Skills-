@@ -107,17 +107,7 @@ stages:
             env:
               ALLOW_NO_TESTS: $(ALLOW_NO_TESTS)     # env mapping avoids bash treating $(...) as a command
             displayName: Run tests
-          - task: PublishTestResults@2              # renderer omits both publish steps when no tests exist
-            condition: succeededOrFailed()
-            inputs:
-              testResultsFormat: JUnit
-              testResultsFiles: '@@TEST_REPORT_GLOB@@'
-              failTaskOnFailedTests: true
-              failTaskOnMissingResultsFile: true
-          - task: PublishCodeCoverageResults@2
-            condition: succeededOrFailed()
-            inputs:
-              summaryFileLocation: '@@COVERAGE_REPORT@@'
+          # Report publication is omitted unless a stack-specific reporter is configured.
 
   - stage: Deploy
     dependsOn: [Build, Scan, Test]
