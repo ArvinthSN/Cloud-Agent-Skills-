@@ -1463,7 +1463,7 @@ def validate_journal_paths(run_dir: Path, state: dict[str, Any], plan: dict[str,
                 raise OrchestratorError("Execution journal contains an unsafe backup file path.")
     for directory_value in state["transaction"].get("created_directories", []):
         directory = Path(directory_value).resolve()
-        if not any(directory in Path(target).parents for target in allowed_targets):
+        if not any(directory == Path(target) or directory in Path(target).parents for target in allowed_targets):
             raise OrchestratorError(f"Execution journal contains an unplanned directory path: {directory}")
 
 
@@ -1803,6 +1803,8 @@ def main() -> int:
         else:
             report = execute_run(args)
         print(json.dumps(report, indent=2))
+        if args.command == "recover":
+            return 0
         return 0 if report.get("status") == "completed" else 2 if report.get("status") == "partial" else 1
     except OrchestratorError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
