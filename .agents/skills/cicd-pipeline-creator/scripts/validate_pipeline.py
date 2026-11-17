@@ -162,7 +162,6 @@ def validate(path: str):
                 errors.append("GitHub test job must fail when tests are missing unless ALLOW_NO_TESTS is explicitly enabled.")
 
             for job_name, job_config in jobs.items():
-            for job_name, job_config in jobs.items():
                 if "deploy" not in str(job_name).lower() or not isinstance(job_config, dict):
                     continue
                 condition = str(job_config.get("if", "")).lower()
