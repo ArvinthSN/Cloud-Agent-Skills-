@@ -152,8 +152,8 @@ def test_approved_execute_generates_container_and_pipeline_artifacts(tmp_path):
     report = orchestrator.execute_run(args)
 
     assert report["status"] in {"completed", "partial"}
-    assert (project / "Dockerfile").is_file()
-    assert (project / ".dockerignore").is_file()
+    assert (project / "Dockerfile").is_file(), json.dumps(report, indent=2)
+    assert (project / ".dockerignore").is_file(), json.dumps(report, indent=2)
     pipeline = project / ".github" / "workflows" / "pipeline.yml"
     assert pipeline.is_file()
     assert "actions/download-artifact@0d2ec9d4cbcefe257d822f108de2a1f15f8da9f6" in pipeline.read_text(encoding="utf-8")
