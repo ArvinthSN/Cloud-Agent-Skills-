@@ -1713,36 +1713,57 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
         raise
 
 
+def project_execution_lock(project_root: Path) -> ExecutionLock:
+    """Return the shared lock used by every run that targets the same project."""
+    root = Path(os.path.abspath(project_root))
+    if not root.is_dir():
+        raise OrchestratorError(f"Project directory does not exist: {root}")
+    metadata_dir = root / ".cloud-agent"
+    lock_dir = metadata_dir / "locks"
+    if metadata_dir.is_symlink() or lock_dir.is_symlink():
+        raise OrchestratorError("Project lock directories must not be symlinks.")
+    return ExecutionLock(lock_dir)
+
+
 def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     with ExecutionLock(run_dir):
-        return _execute_locked(args, resume=False)
+        plan = read_json(run_dir / "execution-plan.json")
+        context = read_json(run_dir / "project-context.json")
+        _verify_run_fresh(plan, context, run_dir, verify_project=False)
+        with project_execution_lock(Path(plan["project"]["root"])):
+            return _execute_locked(args, resume=False)
 
 
 def resume_run(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     with ExecutionLock(run_dir):
-        return _execute_locked(args, resume=True)
+        plan = read_json(run_dir / "execution-plan.json")
+        context = read_json(run_dir / "project-context.json")
+        _verify_run_fresh(plan, context, run_dir, verify_project=False)
+        with project_execution_lock(Path(plan["project"]["root"])):
+            return _execute_locked(args, resume=True)
 
 
 def recover_run(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     with ExecutionLock(run_dir):
-        if not args.approve:
-            raise OrchestratorError("Recovery restores pre-run files from the durable backup. Pass --approve to continue.")
         plan = read_json(run_dir / "execution-plan.json")
-        state = read_run_state(run_dir)
-        if state["run_id"] != plan.get("run_id") or state["plan_hash"] != payload_hash(plan):
-            raise OrchestratorError("Execution journal does not match the current plan.")
-        if state["transaction"]["phase"] == "committed":
-            OutputTransaction.cleanup_committed(run_dir, state)
-            state["status"] = "completed"
-            write_run_state(run_dir, state)
-            return state
         context = read_json(run_dir / "project-context.json")
         _verify_run_fresh(plan, context, run_dir, verify_project=False)
-        recover_run_state(run_dir, state, plan)
-        return read_run_state(run_dir)
+        with project_execution_lock(Path(plan["project"]["root"])):
+            if not args.approve:
+                raise OrchestratorError("Recovery restores pre-run files from the durable backup. Pass --approve to continue.")
+            state = read_run_state(run_dir)
+            if state["run_id"] != plan.get("run_id") or state["plan_hash"] != payload_hash(plan):
+                raise OrchestratorError("Execution journal does not match the current plan.")
+            if state["transaction"]["phase"] == "committed":
+                OutputTransaction.cleanup_committed(run_dir, state)
+                state["status"] = "completed"
+                write_run_state(run_dir, state)
+                return state
+            recover_run_state(run_dir, state, plan)
+            return read_run_state(run_dir)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Cloud Agent Skills executable orchestrator.")
