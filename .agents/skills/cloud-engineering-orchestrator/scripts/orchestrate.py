@@ -246,11 +246,10 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
                 "pnpm": "pnpm install --frozen-lockfile",
                 "yarn": "yarn install --frozen-lockfile",
             }.get(pm, None)
+            entry = next((rel for rel in relative_paths if Path(rel).name in {"server.js", "index.js", "main.js"}), "unknown")
             start_cmd = ["npm", "start"] if pm == "npm" and isinstance(scripts, dict) and scripts.get("start") else []
-            if not start_cmd:
-                entry = next((rel for rel in relative_paths if Path(rel).name in {"server.js", "index.js", "main.js"}), None)
-                if entry and pm == "npm":
-                    start_cmd = ["node", entry]
+            if not start_cmd and entry != "unknown" and pm == "npm":
+                start_cmd = ["node", entry]
             framework = next((name for name, markers in FRAMEWORK_MARKERS.items() if any(marker in combined for marker in markers)), "unknown")
             ci_lang = "node"
             lockfile = {"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock"}.get(pm)
@@ -476,7 +475,7 @@ def _containerizer_scan(project: dict[str, Any], context: dict[str, Any]) -> dic
         "start_command": project["start_command"],
         "runtime_version": project["version"],
         "detected_services": project.get("databases", []),
-        "compose_required": bool(context["databases"]),
+        "compose_required": bool(project.get("databases", [])),
         "confidence": "high" if project["framework"] != "unknown" else "low",
         "scan_truncated": context["scan_truncated"],
         "file_count": context["file_count"],
