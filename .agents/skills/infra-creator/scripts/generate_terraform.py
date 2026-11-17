@@ -593,45 +593,51 @@ def generate_project(
         )
     _write(output_dir / "outputs.tf", "\n\n".join(textwrap.dedent(o).strip() for o in outs))
 
-    # tfvars example
+    # tfvars example: emit only variables declared for this selected plan/provider.
+    tfvars_lines = [
+        f'project_name = "{project_name}"',
+        'environment = "dev"',
+    ]
     if provider == "aws":
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        aws_region     = "{region}"
-        vpc_cidr       = "10.0.0.0/16"
-        container_port = 8000
-        desired_count  = 2
-        # Set to a pre-pushed immutable image, for example:
-        # container_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/app@sha256:<64-hex-digest>"
-        # certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/<certificate-id>"
-        db_username    = "appadmin"
-        # db_password  = ""  # set via TF_VAR_db_password
-        """
+        tfvars_lines.extend([
+            f'aws_region = "{region}"',
+            'vpc_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                'desired_count = 2',
+                '# container_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/app@sha256:<64-hex-digest>"',
+                '# certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/<certificate-id>"',
+            ])
     elif provider == "azure":
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        location       = "{region}"
-        vnet_cidr      = "10.0.0.0/16"
-        container_port = 8000
-        # container_image = "myregistry.azurecr.io/app@sha256:<64-hex-digest>"
-        db_username    = "appadmin"
-        # db_password  = ""
-        """
+        tfvars_lines.extend([
+            f'location = "{region}"',
+            'vnet_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                '# container_image = "myregistry.azurecr.io/app@sha256:<64-hex-digest>"',
+            ])
     else:
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        project_id     = "your-gcp-project-id"
-        region         = "{region}"
-        network_cidr   = "10.0.0.0/16"
-        container_port         = 8000
-        allow_unauthenticated = false
-        # container_image = "us-central1-docker.pkg.dev/your-project/repo/app@sha256:<64-hex-digest>"
-        db_username            = "appadmin"
-        # db_password  = ""
-        """
+        tfvars_lines.extend([
+            'project_id = "REPLACE_WITH_GCP_PROJECT_ID"',
+            f'region = "{region}"',
+            'network_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                'allow_unauthenticated = false',
+                '# container_image = "us-central1-docker.pkg.dev/your-project/repo/app@sha256:<64-hex-digest>"',
+            ])
+    if plan.needs_database:
+        tfvars_lines.extend([
+            'db_username = "appadmin"',
+            '# Supply db_password with TF_VAR_db_password; do not store it here.',
+        ])
+    tfvars = "\n".join(tfvars_lines) + "\n"
     _write(output_dir / "terraform.tfvars.example", tfvars)
 
     for env in ("dev", "staging", "prod"):
@@ -665,9 +671,13 @@ def generate_project(
         terraform init
         terraform fmt
         terraform validate
-        terraform plan -var-file=environments/dev/terraform.tfvars
+        cp terraform.tfvars.example terraform.tfvars
+        # Edit terraform.tfvars: set container_image to an immutable digest,
+        # set certificate_arn for AWS, and replace the GCP project ID where applicable.
+        # Supply db_password through TF_VAR_db_password when a database is selected.
+        terraform plan -var-file=terraform.tfvars -var-file=environments/dev/terraform.tfvars
         # Review carefully, then:
-        terraform apply -var-file=environments/dev/terraform.tfvars
+        terraform apply -var-file=terraform.tfvars -var-file=environments/dev/terraform.tfvars
         ```
 
         ## Required inputs and security defaults
