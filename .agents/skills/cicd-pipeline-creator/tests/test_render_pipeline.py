@@ -113,3 +113,34 @@ def test_pnpm_project_is_rejected_until_renderer_supports_it(tmp_path):
     assert result.returncode != 0
     assert "requires npm and package-lock.json" in result.stderr + result.stdout
     assert not (out / "pipeline.yml").exists()
+
+
+
+def test_precomputed_orchestrator_context_skips_repository_discovery(tmp_path):
+    import json
+
+    project = tmp_path / "empty-project"
+    project.mkdir()
+    context = tmp_path / "ci-context.json"
+    context.write_text(
+        json.dumps({
+            "ci_project": {
+                "dir": ".",
+                "lang": "node",
+                "pm": "npm",
+                "install": "npm ci",
+                "build": "npm run build",
+                "test": "npm test",
+                "version": "20",
+                "lockfile": "package-lock.json",
+                "has_tests": True,
+            }
+        }),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    result = run(project, "github", "--out", out, "--context", context)
+    assert result.returncode == 0, result.stderr + result.stdout
+    rendered = (out / "pipeline.yml").read_text(encoding="utf-8")
+    assert "npm ci" in rendered
+    assert "npm run build" in rendered
