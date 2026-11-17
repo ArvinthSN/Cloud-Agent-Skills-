@@ -93,10 +93,10 @@ def detect_values(repo: Path, project_dir: str | None = None, context_path: str 
     test = project.get("test") or "NO_TESTS_DETECTED"
     working_dir = project.get("dir", ".") or "."
     working_path = Path(working_dir)
-    if working_path.is_absolute() or ".." in working_path.parts or any(ch in working_dir for ch in "\\r\\n\\0"):
+    if working_path.is_absolute() or ".." in working_path.parts or (not re.fullmatch(r"[A-Za-z0-9._/-]+", working_dir)):
         raise SystemExit(f"Unsafe project working directory: {working_dir!r}")
     for label, command in (("install", install), ("build", build), ("test", test)):
-        if not isinstance(command, str) or len(command) > 512 or any(ch in command for ch in "\\r\\n\\0"):
+        if not isinstance(command, str) or len(command) > 512 or any(ch in command for ch in "\r\n\0") or "'''" in command:
             raise SystemExit(f"Unsafe or oversized {label} command; use a single-line command of at most 512 characters.")
     lockfile = lockfile or ("pyproject.toml" if lang == "python" else "package-lock.json")
     cache_paths = {
