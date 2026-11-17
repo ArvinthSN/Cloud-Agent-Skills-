@@ -32,7 +32,7 @@ def scan(repo):
         stack="python"
         framework=next((x for x in ("fastapi","django","flask") if x in text),"unknown")
         dependency=next((x for x in paths if Path(x).name in ("requirements.txt","pyproject.toml","poetry.lock")),"unknown")
-        manager="poetry" if "poetry.lock" in low or "[tool.poetry]" in text else "pip"
+        manager="uv" if "uv.lock" in low else "poetry" if "poetry.lock" in low or "[tool.poetry]" in text else "pip"
         entry=next((x for x in paths if Path(x).name in ("main.py","app.py","manage.py")),"unknown")
         runtime="3.12"
     elif "package.json" in low:
@@ -42,6 +42,15 @@ def scan(repo):
         dependency="package.json"
         manager="pnpm" if "pnpm-lock.yaml" in low else "yarn" if "yarn.lock" in low else "npm" if "package-lock.json" in low else "unknown"
         entry=next((x for x in paths if Path(x).name in ("server.js","index.js","main.js","server.ts","main.ts")),"unknown")
+        package_path=next((repo/x for x in paths if Path(x).name=="package.json"),None)
+        start_command=[]
+        if package_path:
+            try:
+                scripts=json.loads(package_path.read_text(encoding="utf-8")).get("scripts",{})
+                if scripts.get("start"): start_command=["npm","start"]
+            except (OSError,json.JSONDecodeError): pass
+        if not start_command and entry.endswith(".js"):
+            start_command=["node",entry]
         runtime="22"
     elif any(x in low for x in ("pom.xml","build.gradle","build.gradle.kts")):
         stack="java"; framework="spring-boot" if "spring-boot" in text else "java"
@@ -51,7 +60,7 @@ def scan(repo):
     for name,pattern in (("postgresql",r"postgres|postgresql"),("mysql",r"\bmysql\b"),("redis",r"\bredis\b")):
         if re.search(pattern,text): services.append(name)
     return {"repository":str(repo.resolve()),"project_type":stack,"framework":framework,"package_manager":manager,
-      "dependency_file":dependency,"entry_point":entry,"runtime_version":runtime,
+      "dependency_file":dependency,"entry_point":entry,"runtime_version":runtime,\n      "start_command":start_command if stack==\"nodejs\" else [],
       "existing_dockerfile":any(Path(x).name.lower()=="dockerfile" for x in paths),
       "existing_compose":any(Path(x).name.lower() in ("compose.yaml","compose.yml","docker-compose.yml","docker-compose.yaml") for x in paths),
       "env_files_detected":[x for x in paths if Path(x).name.startswith(".env")],
