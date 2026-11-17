@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 SCHEMA_VERSION = "1.0"
 SCANNER_VERSION = "1.0"
@@ -26,7 +26,7 @@ SKIP_DIRS = {
     ".git", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".terraform", "vendor", "dist", "build",
     "target", "coverage", "htmlcov", ".next", ".nuxt", ".cache", ".idea",
-    ".vscode", "bin", "obj",
+    ".vscode", ".cloud-agent", "bin", "obj",
 }
 MANIFEST_NAMES = {
     "package.json", "pyproject.toml", "requirements.txt", "setup.py",
@@ -185,6 +185,10 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
                 manifest_text += "\n" + _read_text(manifest_path, text_budget)
         lowered = manifest_text.lower()
         paths = [r["path"] for r in records if directory == "." or r["path"].startswith(directory.rstrip("/") + "/")]
+        relative_paths = [
+            Path(path).relative_to(directory).as_posix() if directory != "." else path
+            for path in paths
+        ]
         source_samples: list[str] = []
         used = len(manifest_text)
         for rel in paths:
@@ -222,7 +226,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
             }.get(pm, None)
             start_cmd = ["npm", "start"] if pm == "npm" and isinstance(scripts, dict) and scripts.get("start") else []
             if not start_cmd:
-                entry = next((rel for rel in paths if Path(rel).name in {"server.js", "index.js", "main.js"}), None)
+                entry = next((rel for rel in relative_paths if Path(rel).name in {"server.js", "index.js", "main.js"}), None)
                 if entry and pm == "npm":
                     start_cmd = ["node", str(Path(entry).relative_to(project_root)) if project_root != root else entry]
             framework = next((name for name, markers in FRAMEWORK_MARKERS.items() if any(marker in combined for marker in markers)), "unknown")
@@ -257,7 +261,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
                 if pm == "pip":
                     install_cmd += " && python -m pip install ."
             test_cmd = "pytest -q" if any(re.search(r"(^|/)(tests?|test_.*|.*_test\.py)(/|$)", rel) for rel in paths) else None
-            entry = next((rel for rel in paths if Path(rel).name in {"main.py", "app.py", "manage.py"}), "unknown")
+            entry = next((rel for rel in relative_paths if Path(rel).name in {"main.py", "app.py", "manage.py"}), "unknown")
             start_cmd = []
             framework = next((name for name, markers in FRAMEWORK_MARKERS.items() if any(marker in combined for marker in markers)), "unknown")
             ci_lang = "python"
@@ -285,12 +289,17 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
         else:
             continue
 
+        project_databases = sorted(
+            name for name, markers in DATABASE_MARKERS.items()
+            if any(marker in combined for marker in markers)
+        )
         projects.append({
             "id": f"{directory}:{language}",
             "dir": directory,
             "language": language,
             "ci_lang": ci_lang,
             "framework": framework,
+            "databases": project_databases,
             "package_manager": pm,
             "manifest": manifest,
             "version": version,
@@ -385,6 +394,7 @@ def scan_project(root: Path) -> dict[str, Any]:
         "scan_truncated": False,
         "files": paths[:500],
         "files_omitted": max(0, len(paths) - 500),
+        "dependency_files": sorted(path for path in paths if Path(path).name in MANIFEST_NAMES),
         "languages": sorted(languages),
         "frameworks": frameworks,
         "databases": databases,
@@ -429,7 +439,7 @@ def _containerizer_scan(project: dict[str, Any], context: dict[str, Any]) -> dic
         "entry_point": project["entry_point"],
         "start_command": project["start_command"],
         "runtime_version": project["version"],
-        "detected_services": context["databases"],
+        "detected_services": project.get("databases", []),
         "compose_required": bool(context["databases"]),
         "confidence": "high" if project["framework"] != "unknown" else "low",
         "scan_truncated": context["scan_truncated"],
@@ -446,7 +456,7 @@ def _infra_scan(context: dict[str, Any]) -> dict[str, Any]:
         "has_docker_compose": context["has_docker_compose"],
         "docker_files": context["docker_files"],
         "databases": context["databases"],
-        "dependency_files": [p for p in context["files"] if Path(p).name in MANIFEST_NAMES],
+        "dependency_files": context.get("dependency_files", []),
         "env_var_names": context["env_var_names"],
         "sensitive_env_var_names": context["sensitive_env_var_names"],
         "infra_files": context["infra_files"],
@@ -494,8 +504,21 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
     selected = select_project(context["projects"], args.project_dir, project_required)
     if selected is not None:
         context["selected_project"] = selected
+    if "app-containerizer" in skills and selected["language"] not in {"python", "node", "java"}:
+        raise OrchestratorError(f"app-containerizer does not currently support {selected['language']}.")
+    if "cicd-pipeline-creator" in skills:
+        if selected["ci_lang"] not in {"python", "node"}:
+            raise OrchestratorError(f"CI/CD renderer does not currently support {selected['ci_lang']}; supported stacks are Python and Node.js.")
+        if not selected["install_command"] or not selected["build_command"]:
+            raise OrchestratorError("The selected application has no supported install and artifact-producing build command. Configure the project before selecting cicd-pipeline-creator.")
+        if selected["ci_lang"] == "node" and (selected["package_manager"] != "npm" or selected["lockfile"] != "package-lock.json"):
+            raise OrchestratorError("The current CI/CD renderer requires npm with package-lock.json. pnpm, yarn and unlocked projects are not supported yet.")
     run_id = str(uuid.uuid4())
     run_dir = Path(args.run_dir).resolve()
+    if root == run_dir or root in run_dir.parents:
+        relative_run_dir = run_dir.relative_to(root)
+        if ".cloud-agent" not in relative_run_dir.parts:
+            raise OrchestratorError("Use a run directory outside the project, or place it under the ignored .cloud-agent/ directory.")
     if run_dir.exists() and any(run_dir.iterdir()):
         raise OrchestratorError(f"Run directory is not empty: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
