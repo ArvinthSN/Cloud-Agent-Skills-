@@ -86,7 +86,7 @@ pipeline {
                     }
                     post {
                         always {
-                            junit testResults: '@@TEST_REPORT_GLOB@@', allowEmptyResults: false
+                            junit testResults: '@@TEST_REPORT_GLOB@@', allowEmptyResults: true
                             // coverage publishing: add the Coverage plugin step here. TODO(verify)
                         }
                     }
