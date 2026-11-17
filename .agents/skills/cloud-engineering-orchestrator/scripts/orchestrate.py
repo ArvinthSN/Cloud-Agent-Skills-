@@ -652,8 +652,18 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
         raise OrchestratorError("Scanner version changed after planning. Create a fresh plan before executing.")
     if context.get("selected_project", {}).get("id") != plan.get("workflow", {}).get("project_id") and plan.get("workflow", {}).get("project_id") is not None:
         raise OrchestratorError("Selected project does not match the execution plan.")
-    for skill in plan.get("selected_skills", []):
+    selected_skills = plan.get("selected_skills", [])
+    if not isinstance(selected_skills, list) or not selected_skills or len(selected_skills) != len(set(selected_skills)):
+        raise OrchestratorError("Execution plan has an empty or invalid selected_skills list.")
+    if plan.get("approval_required") is not True:
+        raise OrchestratorError("Execution plan does not declare its approval gate.")
+    for skill in selected_skills:
+        if skill not in SKILL_NAMES:
+            raise OrchestratorError(f"Unsupported skill in execution plan: {skill}")
         handoff_path = run_dir / "handoffs" / skill / "handoff.json"
+        recorded_path = plan.get("handoffs", {}).get(skill)
+        if not recorded_path or Path(recorded_path).resolve() != handoff_path.resolve():
+            raise OrchestratorError(f"Handoff path mismatch for {skill}.")
         handoff = read_json(handoff_path)
         if payload_hash(handoff) != plan.get("handoff_hashes", {}).get(skill):
             raise OrchestratorError(f"Skill handoff changed after planning: {skill}")
@@ -663,6 +673,16 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
             raise OrchestratorError(f"Invalid or mismatched handoff for {skill}.")
         if handoff.get("snapshot_hash") != plan["project"]["snapshot_hash"]:
             raise OrchestratorError(f"Project snapshot mismatch in handoff for {skill}.")
+        if handoff.get("approval_required") is not True:
+            raise OrchestratorError(f"Approval gate missing in handoff for {skill}.")
+        if skill == "app-containerizer" and not isinstance(handoff.get("input"), dict):
+            raise OrchestratorError("Containerizer handoff is missing its input object.")
+        if skill == "cicd-pipeline-creator":
+            if not isinstance(handoff.get("ci_project"), dict) or handoff.get("platform") not in CI_PLATFORMS:
+                raise OrchestratorError("CI/CD handoff is missing a supported platform or project object.")
+        if skill == "infra-creator":
+            if not isinstance(handoff.get("input"), dict) or handoff.get("provider") not in PROVIDERS:
+                raise OrchestratorError("Infrastructure handoff is missing a supported provider or scan input.")
         project_root = Path(handoff.get("project_root", "")).resolve()
         if project_root != root and root not in project_root.parents:
             raise OrchestratorError(f"Skill handoff project path escapes the scanned repository: {skill}.")
@@ -844,6 +864,7 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
     _verify_run_fresh(plan, context, run_dir)
 
+    started_at = utc_now()
     skill_results: dict[str, Any] = {}
     all_artifacts: list[dict[str, str]] = []
     all_checks: list[dict[str, str]] = []
@@ -891,7 +912,7 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
         "assumptions": sorted(set(assumptions)),
         "risks": sorted(set(risks)),
         "manual_actions": sorted(set(manual)),
-        "started_at": utc_now(),
+        "started_at": started_at,
         "finished_at": utc_now(),
     }
     write_json(run_dir / "execution-report.json", report)
