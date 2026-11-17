@@ -1,48 +1,82 @@
 ---
 name: cloud-engineering-orchestrator
-description: Coordinate application containerization, CI/CD pipeline creation and Terraform planning using shared project context, approval gates and consistent execution reports.
+description: Execute coordinated containerization, CI/CD and Terraform workflows using one bounded repository scan and versioned JSON handoffs.
 ---
 
 # Cloud Engineering Orchestrator
 
 ## Purpose
-Plan and coordinate cloud-engineering skills for one application repository without repeating discovery or bypassing approvals.
+Create a reusable execution plan and coordinate specialist generators from a single versioned project context.
 
-## Use when
-The user requests an end-to-end cloud setup, a coordinated workflow across multiple cloud skills, or asks to run the Cloud Agent Skills harness. Use a specialist skill directly for one isolated deliverable.
+## CLI
 
-## Inputs
-- Application repository path (required).
-- Desired outcome and constraints (required).
-- Cloud provider and CI/CD platform (optional; ask only if a safe choice cannot be inferred).
-- Output directory (optional; choose a clearly named directory under the repository only after approval).
+Run from the repository root:
 
-## Workflow
-1. Read this skill and the shared skill, output and token-efficiency contracts.
-2. Inspect the repository once. Exclude VCS, dependency, cache, generated, binary and oversized files.
-3. Produce an execution plan conforming to the execution-plan schema.
-4. Select only necessary specialist skills: app-containerizer for Docker/Compose, infra-creator for Terraform, cicd-pipeline-creator for CI/CD.
-5. Load selected SKILL.md files; load only references relevant to the selected stack, provider and platform.
-6. Reuse project facts. Re-scan only when the target differs, the handoff is invalid/stale or a required fact is missing.
-7. Present the combined plan, assumptions, files to be written and external actions. Obtain approval before writing/replacing files, provisioning, deploying or publishing.
-8. Execute in dependency order. Do not assume an artifact exists unless its producing skill reports it.
-9. Validate outputs and create a combined report conforming to the execution-report schema.
-10. Summarize artifact paths, executed checks, warnings, risks and manual actions.
+~~~bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py plan \
+  --project ./my-app \
+  --goal "Containerize the application and prepare CI plus Terraform" \
+  --skills app-containerizer,cicd-pipeline-creator,infra-creator \
+  --provider aws \
+  --platform github \
+  --run-dir ./.cloud-agent/runs/my-app
 
-## Handoffs
-- Use one project context and one report per skill.
-- Refer to artifacts by path; do not embed full files in handoffs.
-- Pass only facts required by the next skill.
-- Do not duplicate scans or validators without a reason.
-- Reject malformed or unsupported handoffs rather than guessing.
+# Review execution-plan.json, project-context.json and handoffs/ first.
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \
+  --run-dir ./.cloud-agent/runs/my-app \
+  --approve
+~~~
 
-## Safety
-- Planning does not authorize file writes.
-- Never run Terraform apply/destroy, deploy, publish images, modify cloud accounts or push commits implicitly.
-- Never ask for or expose secret values.
-- Preserve existing files. Require explicit overwrite approval.
-- Stop if deployment target, resource scope or permissions are ambiguous.
-- Report unavailable tools as NOT_RUN, never PASS.
+Add --project-dir backend when a monorepo has multiple applications. Add --compose-services postgresql,redis only when those local dependencies are intentionally requested. Add --overwrite as a separate approval when an existing Dockerfile, pipeline or Terraform output must be replaced.
 
-## Completion
-Return a concise summary and structured execution report. Local generation does not mean a pipeline ran, infrastructure was provisioned or an application was deployed.
+## Commands
+
+### plan
+1. Validate requested skills and required provider/platform inputs.
+2. Perform one bounded read-only scan, skipping VCS, dependency, cache, generated and local state directories.
+3. Record a content fingerprint and Git revision where available.
+4. Write project-context.json, execution-plan.json and one handoff.json per selected skill.
+5. Reuse one project selection across containerizer and CI; fail closed on ambiguous monorepos or unsupported CI stacks.
+
+Planning creates run metadata only. It does not generate application artifacts.
+
+### execute
+1. Require --approve.
+2. Verify that the project fingerprint still matches the plan. A changed project requires a fresh plan.
+3. Validate run IDs and skill identity in every handoff.
+4. Execute only selected local generators in dependency order.
+5. Pass precomputed handoff data into the specialist scripts. CI renderer accepts --context and skips its own discovery scan.
+6. Run available static validators and write execution-report.json with per-skill results.
+7. Continue independent skills after an individual skill failure and return partial status when appropriate.
+
+Exit codes: 0 completed, 1 failed/blocked, 2 partial.
+
+## Handoff contract
+Every handoff follows .agents/schemas/skill-handoff.schema.json and includes:
+- schema version, run ID, skill ID and project root;
+- Git revision and a SHA-256 project snapshot fingerprint;
+- goal and approval requirement;
+- compact skill-specific inputs and output paths.
+
+The canonical context stores file paths, sizes, hashes and detected metadata only. It does not copy application source code or environment variable values. Secret-like environment variable names may be included as metadata; secret values must never be read into handoffs.
+
+## Safety and scope
+- --approve authorizes only local file generation described by the reviewed plan.
+- --overwrite separately authorizes replacing existing generated files.
+- Never execute terraform apply/destroy, cloud provisioning, deployment, image publishing, secret retrieval or Git push.
+- Terraform validation runs only if the CLI is installed. Missing Terraform is NOT_RUN.
+- Pipeline rendering is not pipeline execution. Container static validation is not a Docker build.
+- No secret values, tokens or local .env contents are written to context files.
+- Run directories must be outside the project or under the ignored .cloud-agent/ folder.
+- A stale plan is rejected; re-run plan after source changes.
+- Project discovery is heuristic. Review stack, framework, runtime, service and architecture findings before approval.
+
+## Outputs
+The run directory contains:
+- project-context.json — canonical bounded scan and project fingerprint;
+- execution-plan.json — selected skills, assumptions, provider/platform and outputs;
+- handoffs/<skill>/handoff.json — compact versioned input for each specialist;
+- handoffs/<skill>/* — derived intermediate files for executed skills;
+- execution-report.json — statuses, artifacts, checks, risks and manual actions.
+
+The report status is completed, partial, blocked or failed. Each check is PASS, FAIL, WARNING, SKIPPED or NOT_RUN. Missing tools never count as successful validation.
