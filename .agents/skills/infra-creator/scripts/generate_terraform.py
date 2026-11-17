@@ -218,6 +218,15 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type        = string
           default     = "dev"
         }}
+
+        variable "container_image" {{
+          description = "Immutable OCI image reference using repository@sha256:<64 hex characters>"
+          type        = string
+          validation {{
+            condition     = can(regex("@sha256:[0-9a-f]{{64}}$", var.container_image))
+            error_message = "container_image must be an immutable OCI SHA-256 digest reference."
+          }}
+        }}
         """
     if provider == "aws":
         return common + f"""
@@ -236,6 +245,11 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
         variable "container_port" {{
           type    = number
           default = 8000
+        }}
+
+        variable "certificate_arn" {{
+          description = "ACM certificate ARN for the HTTPS application load balancer listener"
+          type        = string
         }}
 
         variable "desired_count" {{
@@ -271,6 +285,12 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
         variable "container_port" {{
           type    = number
           default = 8000
+        }}
+
+        variable "allow_unauthenticated" {{
+          description = "Explicitly allow unauthenticated Cloud Run invocation"
+          type        = bool
+          default     = false
         }}
 
         variable "db_username" {{
@@ -415,6 +435,8 @@ def generate_project(
                   public_subnet_ids  = module.networking.public_subnet_ids
                   container_port     = var.container_port
                   desired_count      = var.desired_count
+                  container_image    = var.container_image
+                  certificate_arn    = var.certificate_arn
                 }
                 """
             )
@@ -457,6 +479,7 @@ def generate_project(
                   environment    = var.environment
                   subnet_id      = module.networking.app_subnet_id
                   container_port = var.container_port
+                  container_image = var.container_image
                 }
                 """
             )
@@ -499,8 +522,10 @@ def generate_project(
                   region         = var.region
                   environment    = var.environment
                   network_id     = module.networking.network_id
-                  subnet_id      = module.networking.subnet_id
-                  container_port = var.container_port
+                  subnet_id             = module.networking.subnet_id
+                  container_port        = var.container_port
+                  container_image       = var.container_image
+                  allow_unauthenticated = var.allow_unauthenticated
                 }
                 """
             )
@@ -579,6 +604,9 @@ def generate_project(
         vpc_cidr       = "10.0.0.0/16"
         container_port = 8000
         desired_count  = 2
+        # Set to a pre-pushed immutable image, for example:
+        # container_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/app@sha256:<64-hex-digest>"
+        # certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/<certificate-id>"
         db_username    = "appadmin"
         # db_password  = ""  # set via TF_VAR_db_password
         """
@@ -589,6 +617,7 @@ def generate_project(
         location       = "{region}"
         vnet_cidr      = "10.0.0.0/16"
         container_port = 8000
+        # container_image = "myregistry.azurecr.io/app@sha256:<64-hex-digest>"
         db_username    = "appadmin"
         # db_password  = ""
         """
@@ -599,8 +628,10 @@ def generate_project(
         project_id     = "your-gcp-project-id"
         region         = "{region}"
         network_cidr   = "10.0.0.0/16"
-        container_port = 8000
-        db_username    = "appadmin"
+        container_port         = 8000
+        allow_unauthenticated = false
+        # container_image = "us-central1-docker.pkg.dev/your-project/repo/app@sha256:<64-hex-digest>"
+        db_username            = "appadmin"
         # db_password  = ""
         """
     _write(output_dir / "terraform.tfvars.example", tfvars)
