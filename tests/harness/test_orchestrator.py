@@ -156,7 +156,7 @@ def test_approved_execute_generates_container_and_pipeline_artifacts(tmp_path):
     assert (project / ".dockerignore").is_file()
     pipeline = project / ".github" / "workflows" / "pipeline.yml"
     assert pipeline.is_file()
-    assert "actions/download-artifact@v4" in pipeline.read_text(encoding="utf-8")
+    assert "actions/download-artifact@0d2ec9d4cbcefe257d822f108de2a1f15f8da9f6" in pipeline.read_text(encoding="utf-8")
     assert (run_dir / "execution-report.json").is_file()
     assert report["skill_reports"]["app-containerizer"]["status"] == "completed"
     assert report["skill_reports"]["cicd-pipeline-creator"]["status"] in {"completed", "partial"}
