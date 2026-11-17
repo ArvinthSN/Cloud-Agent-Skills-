@@ -77,14 +77,14 @@ def validate(project_dir: Path) -> ValidationResult:
 
             code, out, err = run_cmd([tf, "init", "-backend=false", "-input=false", "-no-color"], cwd=validation_dir)
             result.init_ok = code == 0
-            result.messages.append("terraform init -backend=false: OK" if code == 0 else f"terraform init failed:\\n{err or out}")
+            result.messages.append("terraform init -backend=false: OK" if code == 0 else f"terraform init failed:\n{err or out}")
             if not result.init_ok:
                 result.errors.append(err or out or "terraform init failed")
 
             if result.init_ok:
                 code, out, err = run_cmd([tf, "validate", "-no-color"], cwd=validation_dir)
                 result.validate_ok = code == 0
-                result.messages.append("terraform validate: OK" if code == 0 else f"terraform validate failed:\\n{err or out}")
+                result.messages.append("terraform validate: OK" if code == 0 else f"terraform validate failed:\n{err or out}")
                 if not result.validate_ok:
                     result.errors.append(err or out or "terraform validate failed")
             else:
