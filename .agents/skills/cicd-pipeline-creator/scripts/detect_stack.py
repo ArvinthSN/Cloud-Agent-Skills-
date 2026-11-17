@@ -85,9 +85,9 @@ def detect_node(root: Path, dir_name: str, names: set[str], has_tests: bool):
 
 def detect_python(root: Path, dir_name: str, names: set[str], has_tests: bool):
     if "poetry.lock" in names:
-        pm, lock, install = "poetry", "poetry.lock", "poetry install"
+        pm, lock, install = "poetry", "poetry.lock", "python -m pip install poetry && poetry install --no-interaction"
     elif "uv.lock" in names:
-        pm, lock, install = "uv", "uv.lock", "uv sync --frozen"
+        pm, lock, install = "uv", "uv.lock", "python -m pip install uv && uv sync --frozen"
     elif "requirements.txt" in names:
         pm, lock, install = "pip", "requirements.txt", "python -m pip install -r requirements.txt"
     elif "pyproject.toml" in names:
