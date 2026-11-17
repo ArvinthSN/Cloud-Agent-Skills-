@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shutil
 import sys
 import textwrap
@@ -332,9 +333,15 @@ def generate_project(
     provider = plan.provider
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported provider: {provider}")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", project_name):
+        raise ValueError("project_name must start with a lowercase letter and contain only lowercase letters, digits or hyphens (max 31 chars).")
+    if plan.needs_database and plan.db_engine not in {"postgres", "mysql"}:
+        raise ValueError(f"Unsupported database engine: {plan.db_engine}")
 
     defaults = {"aws": "us-east-1", "azure": "eastus", "gcp": "us-central1"}
     region = region or defaults[provider]
+    if not re.fullmatch(r"[A-Za-z0-9-]{2,40}", region):
+        raise ValueError(f"Invalid region value: {region}")
 
     output_dir = output_dir.resolve()
     if plan.compute_type == "serverless":
