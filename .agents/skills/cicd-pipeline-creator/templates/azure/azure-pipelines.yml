@@ -1,3 +1,4 @@
+---
 # Source: learn.microsoft.com/azure/devops/pipelines (YAML schema) + publisher docs for gitleaks/trivy
 # Fetched: '@@FETCH_DATE@@'   Upstream ref: '@@UPSTREAM_REF@@'
 # TODO(verify): task versions, scanner image tags/subcommands, AzureWebApp@1 and AzureAppServiceManage@0 inputs
