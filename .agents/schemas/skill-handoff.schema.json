@@ -12,11 +12,17 @@
     "project_revision",
     "snapshot_hash",
     "goal",
-    "approval_required"
+    "approval_required",
+    "depends_on"
   ],
   "properties": {
-    "schema_version": { "const": "1.0" },
-    "run_id": { "type": "string", "format": "uuid" },
+    "schema_version": {
+      "const": "1.1"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
     "skill": {
       "enum": [
         "app-containerizer",
@@ -24,41 +30,133 @@
         "infra-creator"
       ]
     },
-    "project_root": { "type": "string", "minLength": 1 },
-    "project_revision": { "type": ["string", "null"] },
-    "snapshot_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "goal": { "type": "string", "minLength": 1 },
-    "approval_required": { "type": "boolean", "const": true },
-    "input": { "type": "object" },
-    "ci_project": { "type": "object" },
-    "platform": { "enum": ["github", "azure"] },
-    "provider": { "enum": ["aws", "azure", "gcp"] },
+    "project_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshot_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "approval_required": {
+      "type": "boolean",
+      "const": true
+    },
+    "depends_on": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "app-containerizer",
+          "cicd-pipeline-creator",
+          "infra-creator"
+        ]
+      }
+    },
+    "input": {
+      "type": "object"
+    },
+    "ci_project": {
+      "type": "object"
+    },
+    "platform": {
+      "enum": [
+        "github",
+        "azure"
+      ]
+    },
+    "provider": {
+      "enum": [
+        "aws",
+        "azure",
+        "gcp"
+      ]
+    },
     "compose_services": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "enum": ["postgresql", "mysql", "redis"] }
+      "items": {
+        "enum": [
+          "postgresql",
+          "mysql",
+          "redis"
+        ]
+      }
     },
-    "output_dir": { "type": "string" },
-    "outputs": { "type": "array", "items": { "type": "string" } },
-    "executed_at": { "type": "string", "format": "date-time" }
+    "output_dir": {
+      "type": "string"
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "executed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   },
   "allOf": [
     {
-      "if": { "properties": { "skill": { "const": "app-containerizer" } } },
+      "if": {
+        "properties": {
+          "skill": {
+            "const": "app-containerizer"
+          }
+        }
+      },
       "then": {
-        "required": ["input", "compose_services", "outputs"]
+        "required": [
+          "input",
+          "compose_services",
+          "outputs"
+        ]
       }
     },
     {
-      "if": { "properties": { "skill": { "const": "cicd-pipeline-creator" } } },
+      "if": {
+        "properties": {
+          "skill": {
+            "const": "cicd-pipeline-creator"
+          }
+        }
+      },
       "then": {
-        "required": ["ci_project", "platform", "output_dir", "outputs"]
+        "required": [
+          "ci_project",
+          "platform",
+          "output_dir",
+          "outputs"
+        ]
       }
     },
     {
-      "if": { "properties": { "skill": { "const": "infra-creator" } } },
+      "if": {
+        "properties": {
+          "skill": {
+            "const": "infra-creator"
+          }
+        }
+      },
       "then": {
-        "required": ["input", "provider", "output_dir", "outputs"]
+        "required": [
+          "input",
+          "provider",
+          "output_dir",
+          "outputs"
+        ]
       }
     }
   ]

@@ -43,7 +43,7 @@ python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py exec
 
 Use `--project-dir backend` for monorepos, `--compose-services postgresql,redis` only for explicitly selected local dependencies, and `--overwrite` only when replacing existing generated files. The `.cloud-agent/` run directory is ignored by repository scans.
 
-The run contains `project-context.json`, `execution-plan.json`, `handoffs/` and `execution-report.json`. Execution writes local artifacts only; it never applies Terraform, provisions cloud resources, deploys, publishes images or pushes commits.
+The run contains `project-context.json`, `execution-plan.json`, `handoffs/` and `execution-report.json`. Execution follows a validated dependency graph: when containerization is selected, CI/CD and infrastructure generation wait for it to complete. A failed, blocked or partial workflow triggers rollback of all generated project outputs. Context cache entries are reused only for an identical root, scanner version and full content snapshot; the project is still fingerprinted to detect changes. Use `--no-cache` to opt out. Install the runtime schema validator with `python -m pip install jsonschema`. Execution writes local artifacts only; it never applies Terraform, provisions cloud resources, deploys, publishes images or pushes commits.
 
 ## Quick start
 

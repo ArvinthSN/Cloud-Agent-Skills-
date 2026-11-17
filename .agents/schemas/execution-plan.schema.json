@@ -6,20 +6,34 @@
   "additionalProperties": false,
   "required": [
     "schema_version",
+    "run_id",
     "request",
     "project",
     "selected_skills",
-    "approval_required"
+    "dependencies",
+    "execution_order",
+    "workflow",
+    "approval_required",
+    "assumptions",
+    "blocked_on",
+    "created_at",
+    "handoffs",
+    "handoff_hashes"
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0"
+      "const": "1.1"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
     },
     "request": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "goal"
+        "goal",
+        "constraints"
       ],
       "properties": {
         "goal": {
@@ -38,7 +52,15 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "root"
+        "root",
+        "revision",
+        "detected_stack",
+        "architecture",
+        "confidence",
+        "snapshot_hash",
+        "context_file",
+        "scanner_version",
+        "context_hash"
       ],
       "properties": {
         "root": {
@@ -76,10 +98,12 @@
           "pattern": "^[a-f0-9]{64}$"
         },
         "context_file": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "scanner_version": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "context_hash": {
           "type": "string",
@@ -90,37 +114,60 @@
     "selected_skills": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
-        "type": "string",
-        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
-      },
-      "uniqueItems": true
-    },
-    "approval_required": {
-      "type": "boolean"
-    },
-    "assumptions": {
-      "type": "array",
-      "items": {
-        "type": "string"
+        "enum": [
+          "app-containerizer",
+          "cicd-pipeline-creator",
+          "infra-creator"
+        ]
       }
     },
-    "blocked_on": {
-      "type": "array",
-      "items": {
-        "type": "string"
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "enum": [
+            "app-containerizer",
+            "cicd-pipeline-creator",
+            "infra-creator"
+          ]
+        }
       }
     },
-    "run_id": {
-      "type": "string",
-      "format": "uuid"
+    "execution_order": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "app-containerizer",
+          "cicd-pipeline-creator",
+          "infra-creator"
+        ]
+      }
     },
     "workflow": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "project_dir",
+        "project_id",
+        "provider",
+        "platform",
+        "compose_services",
+        "output_root",
+        "ci_output",
+        "infra_output",
+        "overwrite_approved",
+        "context_cache"
+      ],
       "properties": {
         "project_dir": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "project_id": {
           "type": [
@@ -129,10 +176,6 @@
           ]
         },
         "provider": {
-          "type": [
-            "string",
-            "null"
-          ],
           "enum": [
             "aws",
             "azure",
@@ -141,10 +184,6 @@
           ]
         },
         "platform": {
-          "type": [
-            "string",
-            "null"
-          ],
           "enum": [
             "github",
             "azure",
@@ -172,26 +211,76 @@
           "type": "string"
         },
         "overwrite_approved": {
-          "type": "boolean"
+          "type": "boolean",
+          "const": false
+        },
+        "context_cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "status",
+            "directory",
+            "key"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "disabled",
+                "miss",
+                "hit",
+                "unavailable"
+              ]
+            },
+            "directory": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
         }
+      }
+    },
+    "approval_required": {
+      "type": "boolean",
+      "const": true
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
     "handoffs": {
       "type": "object",
+      "minProperties": 1,
       "additionalProperties": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "handoff_hashes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
       }
     },
     "created_at": {
       "type": "string",
       "format": "date-time"
-    },
-    "handoff_hashes": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
-      }
     }
   }
 }

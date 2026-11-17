@@ -7,8 +7,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,8 +18,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
-SCHEMA_VERSION = "1.0"
-SCANNER_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
+SCANNER_VERSION = "1.1"
+SCHEMAS_ROOT = REPO_ROOT / ".agents" / "schemas"
+MAX_TRANSACTION_FILES = 5000
+MAX_TRANSACTION_BYTES = 128 * 1024 * 1024
 MAX_FILES = 5000
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_TEXT_BYTES = 64 * 1024
@@ -38,6 +43,11 @@ SKILL_NAMES = {
     "app-containerizer",
     "cicd-pipeline-creator",
     "infra-creator",
+}
+SKILL_DEPENDENCIES = {
+    "app-containerizer": (),
+    "cicd-pipeline-creator": ("app-containerizer",),
+    "infra-creator": ("app-containerizer",),
 }
 CI_PLATFORMS = {"github", "azure"}
 PROVIDERS = {"aws", "azure", "gcp"}
@@ -118,6 +128,64 @@ def git_value(root: Path, *args: str) -> str | None:
     if result.returncode:
         return None
     return result.stdout.strip()
+
+
+def validate_payload(schema_name: str, payload: dict[str, Any], label: str) -> None:
+    """Validate a runtime payload against the repository's Draft 2020-12 contract."""
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+    except ImportError as exc:
+        raise OrchestratorError(
+            "The jsonschema package is required for fail-closed contract validation. "
+            "Install it with: python -m pip install jsonschema"
+        ) from exc
+    schema_path = SCHEMAS_ROOT / schema_name
+    schema = read_json(schema_path)
+    try:
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        errors = sorted(
+            validator.iter_errors(payload),
+            key=lambda error: (tuple(str(part) for part in error.absolute_path), error.message),
+        )
+    except Exception as exc:
+        raise OrchestratorError(f"Invalid JSON Schema contract {schema_name}: {exc}") from exc
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "$"
+        raise OrchestratorError(f"Invalid {label} at {location}: {error.message}")
+
+
+def resolve_execution_dependencies(skills: list[str]) -> dict[str, list[str]]:
+    selected = set(skills)
+    return {
+        skill: [dependency for dependency in SKILL_DEPENDENCIES[skill] if dependency in selected]
+        for skill in sorted(selected, key=lambda item: list(SKILL_DEPENDENCIES).index(item))
+    }
+
+
+def topological_execution_order(dependencies: dict[str, list[str]]) -> list[str]:
+    order: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(skill: str) -> None:
+        if skill in visiting:
+            raise OrchestratorError(f"Dependency cycle detected at skill: {skill}")
+        if skill in visited:
+            return
+        if skill not in dependencies:
+            raise OrchestratorError(f"Dependency references an unselected skill: {skill}")
+        visiting.add(skill)
+        for dependency in dependencies[skill]:
+            visit(dependency)
+        visiting.remove(skill)
+        visited.add(skill)
+        order.append(skill)
+
+    for skill in dependencies:
+        visit(skill)
+    return order
 
 
 def _hash_file(path: Path, size: int) -> str:
@@ -334,7 +402,13 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
     return projects
 
 
-def scan_project(root: Path) -> dict[str, Any]:
+def scan_project(
+    root: Path,
+    *,
+    cache_dir: Path | None = None,
+    cache_enabled: bool = True,
+    cache_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     root = root.resolve()
     if not root.is_dir():
         raise OrchestratorError(f"Project directory does not exist: {root}")
@@ -399,10 +473,50 @@ def scan_project(root: Path) -> dict[str, Any]:
         snapshot.update(record["path"].encode("utf-8"))
         snapshot.update(str(record["size"]).encode("ascii"))
         snapshot.update(record["sha256"].encode("ascii"))
+    snapshot_hash = snapshot.hexdigest()
+
+    cache_directory = Path(cache_dir).resolve() if cache_dir else root / ".cloud-agent" / "context-cache"
+    cache_path: Path | None = None
+    cache_key = hashlib.sha256(
+        f"{root}\0{SCANNER_VERSION}\0{snapshot_hash}".encode("utf-8")
+    ).hexdigest()
+    if cache_info is not None:
+        cache_info.clear()
+        cache_info.update({
+            "enabled": bool(cache_enabled),
+            "status": "disabled" if not cache_enabled else "miss",
+            "directory": str(cache_directory),
+            "key": cache_key,
+        })
+    if cache_enabled:
+        if cache_directory.is_symlink():
+            raise OrchestratorError(f"Context cache directory must not be a symlink: {cache_directory}")
+        if root == cache_directory or (root in cache_directory.parents and ".cloud-agent" not in cache_directory.relative_to(root).parts):
+            raise OrchestratorError(
+                "A project-local context cache must live under the ignored .cloud-agent/ directory; "
+                "otherwise choose a cache directory outside the project."
+            )
+        cache_path = cache_directory / f"{cache_key}.json"
+        if cache_path.is_file() and not cache_path.is_symlink():
+            try:
+                cached = read_json(cache_path)
+                if (
+                    cached.get("root") == str(root)
+                    and cached.get("scanner_version") == SCANNER_VERSION
+                    and cached.get("snapshot_hash") == snapshot_hash
+                ):
+                    validate_payload("project-context.schema.json", cached, "cached project context")
+                    if cache_info is not None:
+                        cache_info["status"] = "hit"
+                    return cached
+            except OrchestratorError:
+                # Corrupt or obsolete cache entries are never trusted; rebuild from the scan.
+                pass
+
     projects = _manifest_projects(records, root)
     git_revision = git_value(root, "rev-parse", "HEAD")
     dirty = git_value(root, "status", "--porcelain") or ""
-    return {
+    context = {
         "schema_version": SCHEMA_VERSION,
         "scanner_version": SCANNER_VERSION,
         "generated_at": utc_now(),
@@ -431,6 +545,17 @@ def scan_project(root: Path) -> dict[str, Any]:
         "ci_platforms": sorted(ci_platforms),
         "projects": projects,
     }
+    validate_payload("project-context.schema.json", context, "project context")
+    if cache_enabled and cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(cache_path, context)
+            if cache_info is not None:
+                cache_info["status"] = "miss"
+        except OSError:
+            if cache_info is not None:
+                cache_info["status"] = "unavailable"
+    return context
 
 
 def resolve_output_path(value: str | None, base: Path, default: Path) -> Path:
@@ -520,7 +645,18 @@ def _ci_project(project: dict[str, Any]) -> dict[str, Any]:
 
 def create_plan(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.project).resolve()
-    context = scan_project(root)
+    cache_directory = resolve_output_path(
+        args.cache_dir,
+        root,
+        root / ".cloud-agent" / "context-cache",
+    )
+    cache_info: dict[str, Any] = {}
+    context = scan_project(
+        root,
+        cache_dir=cache_directory,
+        cache_enabled=not args.no_cache,
+        cache_info=cache_info,
+    )
     skills = [name.strip() for name in args.skills.split(",") if name.strip()]
     if not skills or len(set(skills)) != len(skills) or set(skills) - SKILL_NAMES:
         raise OrchestratorError(f"--skills must be a comma-separated unique subset of {sorted(SKILL_NAMES)}")
@@ -555,6 +691,8 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             raise OrchestratorError("The selected application has no supported install and artifact-producing build command. Configure the project before selecting cicd-pipeline-creator.")
         if selected["ci_lang"] == "node" and (selected["package_manager"] != "npm" or selected["lockfile"] != "package-lock.json"):
             raise OrchestratorError("The current CI/CD renderer requires npm with package-lock.json. pnpm, yarn and unlocked projects are not supported yet.")
+    dependencies = resolve_execution_dependencies(skills)
+    execution_order = topological_execution_order(dependencies)
     run_id = str(uuid.uuid4())
     run_dir = Path(args.run_dir).resolve()
     if root == run_dir or root in run_dir.parents:
@@ -596,7 +734,10 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             "ci_output": str(ci_out),
             "infra_output": str(infra_out),
             "overwrite_approved": False,
+            "context_cache": cache_info,
         },
+        "dependencies": dependencies,
+        "execution_order": execution_order,
         "approval_required": True,
         "assumptions": [
             "One bounded repository scan is shared by all selected skills.",
@@ -607,8 +748,8 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         "blocked_on": [],
         "created_at": utc_now(),
     }
+    validate_payload("project-context.schema.json", context, "project context")
     write_json(run_dir / "project-context.json", context)
-    write_json(run_dir / "execution-plan.json", plan)
 
     handoff_paths: dict[str, str] = {}
     handoff_hashes: dict[str, str] = {}
@@ -624,6 +765,7 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             "snapshot_hash": context["snapshot_hash"],
             "goal": args.goal.strip(),
             "approval_required": True,
+            "depends_on": dependencies[skill],
         }
         if skill == "app-containerizer":
             handoff["project_root"] = str(project_root)
@@ -641,17 +783,21 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             handoff["provider"] = args.provider
             handoff["output_dir"] = str(infra_out)
             handoff["outputs"] = ["main.tf", "variables.tf", "providers.tf", "versions.tf", "outputs.tf", "modules/"]
+        validate_payload("skill-handoff.schema.json", handoff, f"{skill} handoff")
         write_json(handoff_path, handoff)
         handoff_paths[skill] = str(handoff_path)
         handoff_hashes[skill] = payload_hash(handoff)
 
     plan["handoffs"] = handoff_paths
     plan["handoff_hashes"] = handoff_hashes
+    validate_payload("execution-plan.schema.json", plan, "execution plan")
     write_json(run_dir / "execution-plan.json", plan)
     return plan
 
 
 def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Path) -> None:
+    validate_payload("execution-plan.schema.json", plan, "execution plan")
+    validate_payload("project-context.schema.json", context, "project context")
     if plan.get("schema_version") != SCHEMA_VERSION or context.get("schema_version") != SCHEMA_VERSION:
         raise OrchestratorError("Unsupported plan or project-context schema version.")
     if Path(plan["project"]["root"]).resolve() != Path(context.get("root", "")).resolve():
@@ -659,7 +805,12 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
     if payload_hash(context) != plan["project"].get("context_hash"):
         raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
     root = Path(plan["project"]["root"]).resolve()
-    current = scan_project(root)
+    cache_config = plan.get("workflow", {}).get("context_cache", {})
+    current = scan_project(
+        root,
+        cache_dir=Path(cache_config["directory"]) if cache_config.get("directory") else None,
+        cache_enabled=bool(cache_config.get("enabled", False)),
+    )
     if current["snapshot_hash"] != plan["project"]["snapshot_hash"]:
         raise OrchestratorError("Project files changed after planning. Create a fresh plan before executing.")
     if current["scanner_version"] != plan["project"]["scanner_version"]:
@@ -669,6 +820,10 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
     selected_skills = plan.get("selected_skills", [])
     if not isinstance(selected_skills, list) or not selected_skills or len(selected_skills) != len(set(selected_skills)):
         raise OrchestratorError("Execution plan has an empty or invalid selected_skills list.")
+    expected_dependencies = resolve_execution_dependencies(selected_skills)
+    expected_order = topological_execution_order(expected_dependencies)
+    if plan.get("dependencies") != expected_dependencies or plan.get("execution_order") != expected_order:
+        raise OrchestratorError("Execution dependency graph or order does not match the selected skills.")
     if plan.get("approval_required") is not True:
         raise OrchestratorError("Execution plan does not declare its approval gate.")
     for skill in selected_skills:
@@ -679,8 +834,11 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
         if not recorded_path or Path(recorded_path).resolve() != handoff_path.resolve():
             raise OrchestratorError(f"Handoff path mismatch for {skill}.")
         handoff = read_json(handoff_path)
+        validate_payload("skill-handoff.schema.json", handoff, f"{skill} handoff")
         if payload_hash(handoff) != plan.get("handoff_hashes", {}).get(skill):
             raise OrchestratorError(f"Skill handoff changed after planning: {skill}")
+        if handoff.get("depends_on") != expected_dependencies[skill]:
+            raise OrchestratorError(f"Dependency contract mismatch for {skill}.")
         if handoff.get("schema_version") != SCHEMA_VERSION:
             raise OrchestratorError(f"Unsupported handoff schema version for {skill}.")
         if handoff.get("run_id") != plan.get("run_id") or handoff.get("skill") != skill:
@@ -895,6 +1053,131 @@ def preflight_outputs(plan: dict[str, Any], run_dir: Path, overwrite: bool) -> l
     return conflicts
 
 
+
+def transaction_targets(plan: dict[str, Any], run_dir: Path) -> list[tuple[Path, bool]]:
+    targets: list[tuple[Path, bool]] = []
+    for skill in plan["selected_skills"]:
+        handoff = read_json(run_dir / "handoffs" / skill / "handoff.json")
+        if skill == "app-containerizer":
+            root = Path(handoff["project_root"])
+            targets.extend((root / name, False) for name in (
+                ["Dockerfile", ".dockerignore"] + (["compose.yaml"] if handoff.get("compose_services") else [])
+            ))
+        elif skill == "cicd-pipeline-creator":
+            targets.append((Path(handoff["output_dir"]), True))
+        else:
+            targets.append((Path(handoff["output_dir"]), True))
+
+    # A parent directory snapshot subsumes any nested target and prevents double restore.
+    unique: dict[str, tuple[Path, bool]] = {}
+    for path, is_directory in targets:
+        resolved = Path(os.path.abspath(path))
+        if resolved == run_dir or run_dir in resolved.parents or resolved in run_dir.parents:
+            raise OrchestratorError(f"Generated output must not overlap the orchestrator run directory: {resolved}")
+        unique[str(resolved)] = (resolved, is_directory)
+    ordered = sorted(unique.values(), key=lambda item: len(item[0].parts))
+    collapsed: list[tuple[Path, bool]] = []
+    for item in ordered:
+        if any(parent == item[0] or parent in item[0].parents for parent, _ in collapsed):
+            continue
+        collapsed.append(item)
+    return collapsed
+
+
+class OutputTransaction:
+    """Back up exact generated targets and restore them if any specialist fails."""
+
+    def __init__(self, targets: list[tuple[Path, bool]], run_dir: Path):
+        self.targets = targets
+        self.backup_root = Path(tempfile.mkdtemp(prefix=".output-transaction-", dir=run_dir))
+        self.snapshots: list[tuple[Path, Path | None, str]] = []
+        self.created_directories: set[Path] = set()
+        self.finished = False
+
+    def _measure_directory(self, path: Path) -> None:
+        count = 0
+        total = 0
+        for current, dirs, names in os.walk(path, followlinks=False):
+            base = Path(current)
+            for name in dirs + names:
+                item = base / name
+                if item.is_symlink():
+                    raise OrchestratorError(f"Rollback cannot safely snapshot a symlink: {item}")
+            for name in names:
+                item = base / name
+                try:
+                    count += 1
+                    total += item.stat().st_size
+                except OSError as exc:
+                    raise OrchestratorError(f"Cannot inspect existing output {item}: {exc}") from exc
+                if count > MAX_TRANSACTION_FILES or total > MAX_TRANSACTION_BYTES:
+                    raise OrchestratorError(
+                        f"Existing output directory exceeds the rollback safety limit "
+                        f"({MAX_TRANSACTION_FILES} files / {MAX_TRANSACTION_BYTES} bytes): {path}"
+                    )
+
+    def begin(self) -> None:
+        try:
+            for index, (target, expected_directory) in enumerate(self.targets):
+                if target.is_symlink():
+                    raise OrchestratorError(f"Generated output target must not be a symlink: {target}")
+                cursor = target if expected_directory else target.parent
+                while not cursor.exists() and cursor != cursor.parent:
+                    self.created_directories.add(cursor)
+                    cursor = cursor.parent
+                if not target.exists():
+                    self.snapshots.append((target, None, "missing"))
+                    continue
+                backup = self.backup_root / str(index)
+                if target.is_dir():
+                    self._measure_directory(target)
+                    shutil.copytree(target, backup)
+                    kind = "directory"
+                elif target.is_file():
+                    if target.stat().st_size > MAX_TRANSACTION_BYTES:
+                        raise OrchestratorError(f"Existing output exceeds the rollback safety limit: {target}")
+                    shutil.copy2(target, backup)
+                    kind = "file"
+                else:
+                    raise OrchestratorError(f"Unsupported generated output type: {target}")
+                self.snapshots.append((target, backup, kind))
+        except Exception:
+            shutil.rmtree(self.backup_root, ignore_errors=True)
+            raise
+
+    def rollback(self) -> list[str]:
+        if self.finished:
+            return []
+        restored: list[str] = []
+        for target, backup, kind in reversed(self.snapshots):
+            if target.is_symlink() or target.is_file():
+                target.unlink(missing_ok=True)
+            elif target.is_dir():
+                shutil.rmtree(target)
+            if backup is not None:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if kind == "directory":
+                    shutil.copytree(backup, target)
+                else:
+                    shutil.copy2(backup, target)
+                restored.append(str(target))
+            else:
+                restored.append(str(target))
+        for directory in sorted(self.created_directories, key=lambda item: len(item.parts), reverse=True):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        shutil.rmtree(self.backup_root, ignore_errors=False)
+        self.finished = True
+        return restored
+
+    def commit(self) -> None:
+        if not self.finished:
+            shutil.rmtree(self.backup_root, ignore_errors=False)
+            self.finished = True
+
+
 def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     plan_path = run_dir / "execution-plan.json"
@@ -910,7 +1193,6 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
 
     started_at = utc_now()
     skill_results: dict[str, Any] = {}
-    all_artifacts: list[dict[str, str]] = []
     all_checks: list[dict[str, str]] = [
         _check(
             "output-preflight",
@@ -922,53 +1204,116 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     assumptions = list(plan.get("assumptions", []))
     risks: list[str] = []
     manual: list[str] = []
-    for skill in plan["selected_skills"]:
-        handoff_path = run_dir / "handoffs" / skill / "handoff.json"
-        handoff = read_json(handoff_path)
-        if handoff.get("run_id") != plan.get("run_id") or handoff.get("skill") != skill:
-            raise OrchestratorError(f"Invalid or mismatched handoff for {skill}")
-        result = execute_skill(skill, handoff, run_dir, args.overwrite)
-        skill_results[skill] = result
-        all_artifacts.extend(result["artifacts"])
-        all_checks.extend(result["checks"])
-        assumptions.extend(result["assumptions"])
-        risks.extend(result["risks"])
-        manual.extend(result["manual_actions"])
+    transaction = OutputTransaction(transaction_targets(plan, run_dir), run_dir)
+    transaction.begin()
+    try:
+        for skill in plan["execution_order"]:
+            handoff_path = run_dir / "handoffs" / skill / "handoff.json"
+            handoff = read_json(handoff_path)
+            if handoff.get("run_id") != plan.get("run_id") or handoff.get("skill") != skill:
+                raise OrchestratorError(f"Invalid or mismatched handoff for {skill}")
+            dependencies = plan["dependencies"].get(skill, [])
+            failed_dependencies = [
+                dependency for dependency in dependencies
+                if skill_results.get(dependency, {}).get("status") != "completed"
+            ]
+            if failed_dependencies:
+                result = {
+                    "status": "blocked",
+                    "artifacts": [],
+                    "checks": [_check(
+                        "dependency-gate",
+                        "SKIPPED",
+                        "Required skills did not complete successfully: " + ", ".join(failed_dependencies),
+                    )],
+                    "assumptions": [],
+                    "risks": ["Execution was blocked because a prerequisite skill failed or was partial."],
+                    "manual_actions": ["Resolve prerequisite failures and create a fresh execution plan before retrying."],
+                }
+            else:
+                result = execute_skill(skill, handoff, run_dir, args.overwrite)
+            skill_results[skill] = result
+            all_checks.extend(result["checks"])
+            assumptions.extend(result["assumptions"])
+            risks.extend(result["risks"])
+            manual.extend(result["manual_actions"])
 
-    statuses = [result["status"] for result in skill_results.values()]
-    if all(status == "completed" for status in statuses):
-        overall = "completed"
-    elif all(status == "blocked" for status in statuses):
-        overall = "blocked"
-    elif any(status in {"failed", "blocked"} for status in statuses):
-        overall = "partial" if any(status in {"completed", "partial"} for status in statuses) else "failed"
-    else:
-        overall = "partial"
-    report = {
-        "schema_version": SCHEMA_VERSION,
-        "status": overall,
-        "skill": "cloud-engineering-orchestrator",
-        "run_id": plan["run_id"],
-        "project_revision": plan["project"].get("revision"),
-        "overwrite_approved": bool(args.overwrite),
-        "detected": {
-            "languages": context["languages"],
-            "frameworks": context["frameworks"],
-            "databases": context["databases"],
-            "projects": [project["id"] for project in context["projects"]],
-            "snapshot_hash": context["snapshot_hash"],
-        },
-        "artifacts": all_artifacts,
-        "checks": all_checks,
-        "skill_reports": skill_results,
-        "assumptions": sorted(set(assumptions)),
-        "risks": sorted(set(risks)),
-        "manual_actions": sorted(set(manual)),
-        "started_at": started_at,
-        "finished_at": utc_now(),
-    }
-    write_json(run_dir / "execution-report.json", report)
-    return report
+        statuses_before_rollback = [result["status"] for result in skill_results.values()]
+        needs_rollback = any(status != "completed" for status in statuses_before_rollback)
+        if needs_rollback:
+            rolled_back_paths = transaction.rollback()
+            for result in skill_results.values():
+                result["rolled_back"] = True
+                if result["status"] == "completed":
+                    result["status"] = "rolled_back"
+                result["artifacts"] = []
+            all_artifacts: list[dict[str, str]] = []
+            transaction_status = "rolled_back"
+            all_checks.append(_check(
+                "output-transaction",
+                "PASS",
+                "At least one skill failed, was blocked or was partial; all generated local outputs were restored to their pre-run state.",
+            ))
+            risks.append("Generated outputs were rolled back because the full selected workflow did not complete.")
+        else:
+            rolled_back_paths = []
+            all_artifacts = [
+                artifact
+                for result in skill_results.values()
+                for artifact in result["artifacts"]
+            ]
+            transaction_status = "committed"
+            all_checks.append(_check(
+                "output-transaction",
+                "PASS",
+                "All selected skills completed; generated outputs are committed.",
+            ))
+
+        if all(status == "completed" for status in statuses_before_rollback):
+            overall = "completed"
+        elif all(status == "blocked" for status in statuses_before_rollback):
+            overall = "blocked"
+        elif any(status in {"failed", "blocked"} for status in statuses_before_rollback):
+            overall = "partial" if any(status in {"completed", "partial"} for status in statuses_before_rollback) else "failed"
+        else:
+            overall = "partial"
+
+        report = {
+            "schema_version": SCHEMA_VERSION,
+            "status": overall,
+            "skill": "cloud-engineering-orchestrator",
+            "run_id": plan["run_id"],
+            "project_revision": plan["project"].get("revision"),
+            "overwrite_approved": bool(args.overwrite),
+            "detected": {
+                "languages": context["languages"],
+                "frameworks": context["frameworks"],
+                "databases": context["databases"],
+                "projects": [project["id"] for project in context["projects"]],
+                "snapshot_hash": context["snapshot_hash"],
+            },
+            "transaction": {
+                "status": transaction_status,
+                "rolled_back_paths": rolled_back_paths,
+            },
+            "artifacts": all_artifacts,
+            "checks": all_checks,
+            "skill_reports": skill_results,
+            "assumptions": sorted(set(assumptions)),
+            "risks": sorted(set(risks)),
+            "manual_actions": sorted(set(manual)),
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+        validate_payload("execution-report.schema.json", report, "execution report")
+        write_json(run_dir / "execution-report.json", report)
+        if not needs_rollback:
+            transaction.commit()
+        return report
+    except Exception:
+        if not transaction.finished:
+            transaction.rollback()
+        raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -988,6 +1333,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--ci-output")
     plan.add_argument("--output-root")
     plan.add_argument("--constraint", action="append", default=[])
+    plan.add_argument("--cache-dir", help="Reusable project-context cache directory (default: <project>/.cloud-agent/context-cache).")
+    plan.add_argument("--no-cache", action="store_true", help="Disable reusable project-context caching for this plan.")
 
     execute = subparsers.add_parser("execute", help="Execute local generators from a reviewed plan.")
     execute.add_argument("--run-dir", required=True)

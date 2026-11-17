@@ -270,3 +270,81 @@ def test_cli_plan_and_execute_commands_work_end_to_end(tmp_path):
     assert report["skill"] == "cloud-engineering-orchestrator"
     assert report["overwrite_approved"] is False
     assert (project / "Dockerfile").is_file()
+
+
+
+def test_dependency_graph_is_explicit_and_topologically_ordered(tmp_path):
+    project = make_node_project(tmp_path / "app")
+    run_dir = tmp_path / "run"
+    plan = plan_for(project, run_dir, "cicd-pipeline-creator,app-containerizer")
+    assert plan["execution_order"] == ["app-containerizer", "cicd-pipeline-creator"]
+    assert plan["dependencies"] == {
+        "app-containerizer": [],
+        "cicd-pipeline-creator": ["app-containerizer"],
+    }
+    handoff = json.loads(
+        (run_dir / "handoffs" / "cicd-pipeline-creator" / "handoff.json").read_text(encoding="utf-8")
+    )
+    assert handoff["depends_on"] == ["app-containerizer"]
+
+
+def test_project_context_cache_reuses_only_matching_snapshot(tmp_path):
+    project = make_node_project(tmp_path / "cache-app")
+    first_info = {}
+    first = orchestrator.scan_project(project, cache_info=first_info)
+    assert first_info["status"] == "miss"
+    second_info = {}
+    second = orchestrator.scan_project(project, cache_info=second_info)
+    assert second_info["status"] == "hit"
+    assert second["snapshot_hash"] == first["snapshot_hash"]
+
+    (project / "server.js").write_text('console.log("cache invalidation");\\n', encoding="utf-8")
+    third_info = {}
+    third = orchestrator.scan_project(project, cache_info=third_info)
+    assert third_info["status"] == "miss"
+    assert third["snapshot_hash"] != first["snapshot_hash"]
+
+
+def test_failed_prerequisite_blocks_dependants_and_rolls_back_all_outputs(tmp_path, monkeypatch):
+    project = make_node_project(tmp_path / "rollback-app")
+    existing_dockerfile = project / "Dockerfile"
+    existing_dockerfile.write_text("FROM scratch\\n", encoding="utf-8")
+    run_dir = tmp_path / "rollback-run"
+    plan_for(project, run_dir)
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve", "--overwrite",
+    ])
+    invoked = []
+
+    def fake_execute_skill(skill, handoff, current_run_dir, overwrite):
+        invoked.append(skill)
+        assert overwrite is True
+        (project / "Dockerfile").write_text("FROM node:latest\\n", encoding="utf-8")
+        (project / ".dockerignore").write_text(".env\\n", encoding="utf-8")
+        return {
+            "status": "failed",
+            "artifacts": [],
+            "checks": [{"name": "forced-failure", "status": "FAIL", "detail": "simulated partial write"}],
+            "assumptions": [],
+            "risks": [],
+            "manual_actions": [],
+        }
+
+    monkeypatch.setattr(orchestrator, "execute_skill", fake_execute_skill)
+    report = orchestrator.execute_run(args)
+    assert invoked == ["app-containerizer"]
+    assert report["transaction"]["status"] == "rolled_back"
+    assert existing_dockerfile.read_text(encoding="utf-8") == "FROM scratch\\n"
+    assert not (project / ".dockerignore").exists()
+    assert not (project / ".github" / "workflows").exists()
+    assert report["skill_reports"]["cicd-pipeline-creator"]["status"] == "blocked"
+    assert report["artifacts"] == []
+
+
+def test_runtime_json_schema_validation_rejects_invalid_handoff():
+    with pytest.raises(orchestrator.OrchestratorError, match="Invalid skill handoff"):
+        orchestrator.validate_payload(
+            "skill-handoff.schema.json",
+            {"schema_version": "1.1", "skill": "unknown"},
+            "skill handoff",
+        )

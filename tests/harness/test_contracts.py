@@ -1,16 +1,24 @@
 import json
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS = ROOT / ".agents" / "schemas"
 
 
 def test_execution_schemas_are_valid_json_and_versioned():
-    for name in ("execution-plan.schema.json", "execution-report.schema.json"):
+    for name in (
+        "execution-plan.schema.json",
+        "execution-report.schema.json",
+        "skill-handoff.schema.json",
+        "project-context.schema.json",
+    ):
         schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
         assert schema["$schema"].endswith("/2020-12/schema")
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
+        Draft202012Validator.check_schema(schema)
 
 
 def test_execution_report_has_explicit_check_states():
@@ -39,3 +47,13 @@ def test_handoff_schema_and_executable_orchestrator_are_present():
     content = (orchestrator / "SKILL.md").read_text(encoding="utf-8")
     assert "orchestrate.py plan" in content
     assert "orchestrate.py execute" in content
+
+
+
+def test_production_orchestration_contracts_are_documented():
+    orchestrator = ROOT / ".agents" / "skills" / "cloud-engineering-orchestrator"
+    content = (orchestrator / "SKILL.md").read_text(encoding="utf-8")
+    assert "dependency order" in content
+    assert "rolled back" in content
+    assert "--no-cache" in content
+    assert "Draft 2020-12" in content

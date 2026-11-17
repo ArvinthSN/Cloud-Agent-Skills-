@@ -44,25 +44,30 @@ Planning creates run metadata only. It does not generate application artifacts.
 1. Require --approve.
 2. Verify that the project fingerprint still matches the plan. A changed project requires a fresh plan.
 3. Validate run IDs and skill identity in every handoff.
-4. Execute only selected local generators in dependency order.
+4. Validate the declared dependency graph and execute selected generators in topological dependency order. When containerization is selected, CI/CD and infrastructure generation wait for it to complete.
 5. Pass precomputed handoff data into the specialist scripts. CI renderer accepts --context and skips its own discovery scan.
 6. Run available static validators and write execution-report.json with per-skill results.
-7. Continue independent skills after an individual skill failure and return partial status when appropriate.
+7. Block dependent skills when a prerequisite is not completed. If any selected skill fails, is blocked or is partial, roll back every generated project artifact to its pre-run state.
 
-Exit codes: 0 completed, 1 failed/blocked, 2 partial.
+Exit codes: 0 completed, 1 failed/blocked, 2 partial. A rolled-back run never reports generated artifacts as committed.
 
 ## Handoff contract
-Every handoff follows .agents/schemas/skill-handoff.schema.json and includes:
-- schema version, run ID, skill ID and project root;
+Every handoff is validated against .agents/schemas/skill-handoff.schema.json and includes:
+- schema version, run ID, skill ID, project root and declared prerequisite skill IDs;
 - Git revision and a SHA-256 project snapshot fingerprint;
 - goal and approval requirement;
 - compact skill-specific inputs and output paths.
 
 The canonical context stores file paths, sizes, hashes and detected metadata only. It does not copy application source code or environment variable values. Secret-like environment variable names may be included as metadata; secret values must never be read into handoffs.
 
+## Context cache and validation
+- Reuse context cache entries keyed by the canonical project root, scanner version and full content snapshot hash. The repository is still fingerprinted on every plan/execute freshness check; a changed snapshot cannot hit the cache.
+- Default cache location: <project>/.cloud-agent/context-cache. Use --no-cache to disable it or --cache-dir to move it outside the project.
+- Validate project context, plan, handoffs and execution report against Draft 2020-12 JSON Schemas. Install jsonschema with python -m pip install jsonschema; execution fails closed if the validator is missing or a contract is invalid.
+
 ## Safety and scope
 - --approve authorizes only local file generation described by the reviewed plan.
-- --overwrite separately authorizes replacing existing generated files.
+- --overwrite separately authorizes replacing existing generated files. The orchestrator snapshots generated targets before execution and restores them on any failed/blocked/partial workflow.
 - Never execute terraform apply/destroy, cloud provisioning, deployment, image publishing, secret retrieval or Git push.
 - Terraform validation runs only if the CLI is installed. Missing Terraform is NOT_RUN.
 - Pipeline rendering is not pipeline execution. Container static validation is not a Docker build.
