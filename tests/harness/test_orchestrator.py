@@ -463,3 +463,43 @@ def test_resume_rejects_a_tampered_or_mismatched_journal(tmp_path):
     state["run_id"] = "00000000-0000-0000-0000-000000000000"
     with pytest.raises(orchestrator.OrchestratorError, match="Invalid execution state"):
         orchestrator.write_run_state(run_dir, state)
+
+
+
+def test_resume_does_not_require_overwrite_for_interrupted_generated_files(tmp_path, monkeypatch):
+    project = make_node_project(tmp_path / "resume-new-app")
+    run_dir = tmp_path / "resume-new-run"
+    plan = plan_for(project, run_dir)
+    state = orchestrator.create_run_state(plan)
+    orchestrator.write_run_state(run_dir, state)
+    tx = orchestrator.OutputTransaction(orchestrator.transaction_targets(plan, run_dir), run_dir, state)
+    tx.begin()
+    tx.mark_running()
+    (project / "Dockerfile").write_text("INTERRUPTED\n", encoding="utf-8")
+    (project / ".dockerignore").write_text("INTERRUPTED\n", encoding="utf-8")
+    state["status"] = "running"
+    orchestrator.write_run_state(run_dir, state)
+
+    def successful_skill(skill, handoff, current_run_dir, overwrite):
+        assert overwrite is False
+        if skill == "app-containerizer":
+            (project / "Dockerfile").write_text("FROM node:22\n", encoding="utf-8")
+            (project / ".dockerignore").write_text(".env\n", encoding="utf-8")
+        else:
+            pipeline = project / ".github" / "workflows" / "pipeline.yml"
+            pipeline.parent.mkdir(parents=True, exist_ok=True)
+            pipeline.write_text("name: generated\n", encoding="utf-8")
+            (project / "PIPELINE_NOTES.md").write_text("notes\n", encoding="utf-8")
+        return {
+            "status": "completed", "artifacts": [],
+            "checks": [{"name": "resume-test", "status": "PASS", "detail": "ok"}],
+            "assumptions": [], "risks": [], "manual_actions": [],
+        }
+
+    monkeypatch.setattr(orchestrator, "execute_skill", successful_skill)
+    args = orchestrator.build_parser().parse_args([
+        "resume", "--run-dir", str(run_dir), "--approve",
+    ])
+    report = orchestrator.resume_run(args)
+    assert report["status"] == "completed"
+    assert (project / "Dockerfile").read_text(encoding="utf-8") == "FROM node:22\n"

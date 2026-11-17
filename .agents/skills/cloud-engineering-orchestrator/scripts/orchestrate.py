@@ -123,7 +123,7 @@ def durable_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with temp.open("w", encoding="utf-8", newline="\\n") as handle:
+        with temp.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(canonical_json(value))
             handle.flush()
             os.fsync(handle.fileno())
@@ -822,7 +822,13 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
     return plan
 
 
-def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Path) -> None:
+def _verify_run_fresh(
+    plan: dict[str, Any],
+    context: dict[str, Any],
+    run_dir: Path,
+    *,
+    verify_project: bool = True,
+) -> None:
     validate_payload("execution-plan.schema.json", plan, "execution plan")
     validate_payload("project-context.schema.json", context, "project context")
     if plan.get("schema_version") != SCHEMA_VERSION or context.get("schema_version") != SCHEMA_VERSION:
@@ -831,17 +837,18 @@ def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Pa
         raise OrchestratorError("Project root mismatch between execution plan and context.")
     if payload_hash(context) != plan["project"].get("context_hash"):
         raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
-    root = Path(plan["project"]["root"]).resolve()
-    cache_config = plan.get("workflow", {}).get("context_cache", {})
-    current = scan_project(
-        root,
-        cache_dir=Path(cache_config["directory"]) if cache_config.get("directory") else None,
-        cache_enabled=bool(cache_config.get("enabled", False)),
-    )
-    if current["snapshot_hash"] != plan["project"]["snapshot_hash"]:
-        raise OrchestratorError("Project files changed after planning. Create a fresh plan before executing.")
-    if current["scanner_version"] != plan["project"]["scanner_version"]:
-        raise OrchestratorError("Scanner version changed after planning. Create a fresh plan before executing.")
+    if verify_project:
+        root = Path(plan["project"]["root"]).resolve()
+        cache_config = plan.get("workflow", {}).get("context_cache", {})
+        current = scan_project(
+            root,
+            cache_dir=Path(cache_config["directory"]) if cache_config.get("directory") else None,
+            cache_enabled=bool(cache_config.get("enabled", False)),
+        )
+        if current["snapshot_hash"] != plan["project"]["snapshot_hash"]:
+            raise OrchestratorError("Project files changed after planning. Create a fresh plan before executing.")
+        if current["scanner_version"] != plan["project"]["scanner_version"]:
+            raise OrchestratorError("Scanner version changed after planning. Create a fresh plan before executing.")
     if context.get("selected_project", {}).get("id") != plan.get("workflow", {}).get("project_id") and plan.get("workflow", {}).get("project_id") is not None:
         raise OrchestratorError("Selected project does not match the execution plan.")
     selected_skills = plan.get("selected_skills", [])
@@ -1438,7 +1445,34 @@ class OutputTransaction:
         self.cleanup_committed(self.run_dir, self.state)
 
 
-def recover_run_state(run_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+def validate_journal_paths(run_dir: Path, state: dict[str, Any], plan: dict[str, Any]) -> None:
+    backup_root = _validated_backup_dir(run_dir, state["transaction"])
+    allowed_targets = {
+        str(Path(os.path.abspath(path)))
+        for path, _ in transaction_targets(plan, run_dir)
+    }
+    backup_parent = (backup_root / "backups").resolve()
+    for snapshot in state["transaction"].get("snapshots", []):
+        target = str(Path(snapshot["target"]).resolve())
+        if target not in allowed_targets:
+            raise OrchestratorError(f"Execution journal contains an unplanned output target: {target}")
+        backup_value = snapshot.get("backup")
+        if backup_value:
+            backup = Path(backup_value).resolve()
+            if backup == backup_parent or backup_parent not in backup.parents or backup.is_symlink():
+                raise OrchestratorError("Execution journal contains an unsafe backup file path.")
+    for directory_value in state["transaction"].get("created_directories", []):
+        directory = Path(directory_value).resolve()
+        if not any(directory in Path(target).parents for target in allowed_targets):
+            raise OrchestratorError(f"Execution journal contains an unplanned directory path: {directory}")
+
+
+def recover_run_state(
+    run_dir: Path,
+    state: dict[str, Any],
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    validate_journal_paths(run_dir, state, plan)
     phase = state["transaction"]["phase"]
     backup_root = _validated_backup_dir(run_dir, state["transaction"])
     if phase == "committed":
@@ -1467,6 +1501,7 @@ def recover_run_state(run_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
     state["completed_skills"] = []
     append_state_event(state, "run_interrupted_recovered")
     write_run_state(run_dir, state)
+    (run_dir / "execution-report.json").unlink(missing_ok=True)
     return state
 
 
@@ -1482,9 +1517,6 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
     context = read_json(context_path)
     if not args.approve:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
-    _verify_run_fresh(plan, context, run_dir)
-    existing_outputs = preflight_outputs(plan, run_dir, args.overwrite)
-
     journal_path = state_path(run_dir)
     if journal_path.exists():
         state = read_run_state(run_dir)
@@ -1496,14 +1528,18 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
             )
         if state["status"] == "completed" or state["transaction"]["phase"] == "committed":
             raise OrchestratorError("This run is already completed and committed; create a new plan for another execution.")
-        recover_run_state(run_dir, state)
+        _verify_run_fresh(plan, context, run_dir, verify_project=False)
+        recover_run_state(run_dir, state, plan)
         state = read_run_state(run_dir)
+        _verify_run_fresh(plan, context, run_dir, verify_project=True)
     else:
         if resume:
             raise OrchestratorError("No execution journal exists for this run. Use execute for the first attempt.")
+        _verify_run_fresh(plan, context, run_dir, verify_project=True)
         state = create_run_state(plan)
         write_run_state(run_dir, state)
 
+    existing_outputs = preflight_outputs(plan, run_dir, args.overwrite)
     if state["transaction"]["phase"] not in {"idle", "rolled_back"}:
         raise OrchestratorError("Execution journal is not in a resumable state. Run recover before retrying.")
     if existing_outputs and not args.overwrite:
@@ -1703,7 +1739,9 @@ def recover_run(args: argparse.Namespace) -> dict[str, Any]:
             state["status"] = "completed"
             write_run_state(run_dir, state)
             return state
-        recover_run_state(run_dir, state)
+        context = read_json(run_dir / "project-context.json")
+        _verify_run_fresh(plan, context, run_dir, verify_project=False)
+        recover_run_state(run_dir, state, plan)
         return read_run_state(run_dir)
 
 def build_parser() -> argparse.ArgumentParser:
