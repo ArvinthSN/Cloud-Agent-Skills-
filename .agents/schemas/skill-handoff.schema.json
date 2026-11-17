@@ -72,7 +72,10 @@
     "platform": {
       "enum": [
         "github",
-        "azure"
+        "azure",
+        "gitlab",
+        "jenkins",
+        "circleci"
       ]
     },
     "provider": {
