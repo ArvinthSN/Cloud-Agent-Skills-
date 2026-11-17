@@ -73,7 +73,14 @@ def mutation_checks():
             if not pipeline.exists():
                 pipeline.write_text("name: test\n")
             data = pipeline.read_text(encoding="utf-8")
-            pipeline.write_text(data + "\n" + inject + "\n", encoding="utf-8")
+            if label == "deploy on PRs":
+                data = data.replace(
+                    "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'",
+                    "github.event_name == 'pull_request'",
+                )
+            else:
+                data = data + "\n" + inject + "\n"
+            pipeline.write_text(data, encoding="utf-8")
             res = run([sys.executable, str(VALIDATE), str(pipeline)])
             if res.returncode == 0:
                 raise AssertionError(f"mutation check failed: {label}")
