@@ -128,7 +128,6 @@ def static_security_policy(project_dir: Path) -> list[str]:
 
 
 def validate(project_dir: Path) -> ValidationResult:
-    redef validate(project_dir: Path) -> ValidationResult:
     result = ValidationResult(success=False, terraform_available=False)
     project_dir = project_dir.resolve()
     if not project_dir.is_dir():
