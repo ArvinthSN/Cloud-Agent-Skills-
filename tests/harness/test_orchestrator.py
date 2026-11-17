@@ -210,3 +210,23 @@ def test_mixed_language_manifests_in_one_directory_are_rejected(tmp_path):
     )
     with pytest.raises(orchestrator.OrchestratorError, match="Multiple language manifest groups"):
         orchestrator.scan_project(project)
+
+
+
+def test_output_preflight_prevents_partial_multi_skill_generation(tmp_path):
+    project = make_node_project(tmp_path / "app")
+    existing = project / "Dockerfile"
+    existing.write_text("FROM scratch\n", encoding="utf-8")
+    run_dir = tmp_path / "run"
+    plan_for(project, run_dir)
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+
+    with pytest.raises(orchestrator.OrchestratorError, match="No specialist was executed"):
+        orchestrator.execute_run(args)
+
+    assert existing.read_text(encoding="utf-8") == "FROM scratch\n"
+    assert not (project / ".dockerignore").exists()
+    assert not (project / ".github" / "workflows" / "pipeline.yml").exists()
+    assert not (project / "PIPELINE_NOTES.md").exists()
