@@ -31,6 +31,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Local orchestration runs, locks, journals, and project-context caches
+.cloud-agent/
+
 # Build and dependency output
 node_modules/
 dist/
