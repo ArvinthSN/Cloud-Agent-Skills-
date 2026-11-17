@@ -220,8 +220,9 @@ def main():
         print(f"missing pipeline file: {path}", file=sys.stderr)
         return 1
 
+    pipeline_text = read_text(str(path))
     errors, warnings = validate(str(path))
-    platform = platform_name(str(path), text)
+    platform = platform_name(str(path), pipeline_text)
     ran, skipped = run_native_validators(path, platform)
     errors.extend(
         f"Native validator failed: {item}"
