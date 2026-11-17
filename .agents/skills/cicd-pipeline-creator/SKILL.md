@@ -36,6 +36,12 @@ All five renderers are integrated. Static validation is not equivalent to a prov
 9. Run scripts/validate_pipeline.py and native validators when installed. Fix blockers and report remaining warnings and skipped checks.
 10. Report output paths, required secret/variable names, assumptions, unresolved risks and whether native validators ran.
 
+## Platform timeout behavior
+
+- GitHub Actions, Azure DevOps, GitLab CI and Jenkins templates set explicit job/stage or pipeline timeouts.
+- CircleCI templates set `no_output_timeout` on every command step. This detects commands that become silent; total job duration remains subject to the CircleCI plan's execution limits.
+- Validators enforce the platform-appropriate timeout control instead of assuming one field is portable across providers.
+
 ## Production guardrails
 - No unresolved template markers, fabricated build commands, placeholder deployments or invented cloud resource names.
 - Build once; deploy the exact produced artifact, not a fresh source checkout.
