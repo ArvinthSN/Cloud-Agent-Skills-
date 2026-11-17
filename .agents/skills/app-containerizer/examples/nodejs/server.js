@@ -1,0 +1,1 @@
+const express = require('express');\nconst app = express();\napp.get('/health', (_req,res) => res.json({status:'ok'}));\napp.listen(process.env.PORT || 3000, '0.0.0.0');\n

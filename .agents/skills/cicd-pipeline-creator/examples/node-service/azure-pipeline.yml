@@ -1,0 +1,213 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  INSTALL_CMD: "echo 'No install command detected' && exit 1"
+  BUILD_CMD: "echo 'No build command detected' && exit 1"
+  TEST_CMD: "echo 'No test command detected' && exit 1"
+  ARTIFACT_PATH: "$(Build.SourcesDirectory)/dist"
+  DEPLOY_TARGET: "azure-webapp"
+  ALLOW_NO_TESTS: 'false'
+  DEPLOY_ENABLED: 'false'
+  # Secret values must come from Azure Pipelines variable groups or secure variables.
+
+stages:
+  - stage: Build
+    displayName: Build
+    jobs:
+      - job: BuildApp
+        displayName: Build app
+        timeoutInMinutes: 20
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(PYTHON_VERSION)'
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '$(NODE_VERSION)'
+          - task: Cache@2
+            inputs:
+              key: '$(Agent.OS)|pip|$(PYTHON_VERSION)|npm|$(NODE_VERSION)|requirements.txt|package-lock.json|yarn.lock|pnpm-lock.yaml|poetry.lock'
+              path: |
+                $(Pipeline.Workspace)/.cache/pip
+                $(Pipeline.Workspace)/.npm
+                $(Build.SourcesDirectory)/node_modules
+          - script: |
+              set -eux
+              $(INSTALL_CMD)
+            displayName: Install dependencies
+          - script: |
+              set -eux
+              $(BUILD_CMD)
+            displayName: Build project
+          - script: |
+              set -eux
+              mkdir -p "$(ARTIFACT_PATH)"
+              printf '%s\n' "build_artifact" > "$(ARTIFACT_PATH)/artifact.txt"
+            displayName: Prepare artifact
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(ARTIFACT_PATH)'
+              artifactName: 'build-$(Build.BuildId)'
+            displayName: Publish build artifact
+
+  - stage: Scan
+    displayName: Scan
+    dependsOn: Build
+    jobs:
+      - job: SecurityScan
+        displayName: Security scan
+        timeoutInMinutes: 20
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifactName: 'build-$(Build.BuildId)'
+              targetPath: '$(Pipeline.Workspace)/artifact'
+          # Use the downloaded build artifact; do not reinstall build dependencies unless a tool truly needs dev dependencies.
+          - script: |
+              set -eux
+              python -m pip install --quiet trivy
+              trivy fs --exit-code 1 --severity HIGH,CRITICAL $(Build.SourcesDirectory)
+              python -m pip install --quiet gitleaks
+              gitleaks detect --source . --no-banner --redact --log-opts="--all"
+            displayName: Trivy + Gitleaks scan
+
+  - stage: Test
+    displayName: Test
+    dependsOn: Build
+    jobs:
+      - job: RunTests
+        displayName: Run tests
+        timeoutInMinutes: 25
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifactName: 'build-$(Build.BuildId)'
+              targetPath: '$(Pipeline.Workspace)/artifact'
+          - script: |
+              set -eux
+              if [ -z "$(TEST_CMD)" ] || [ "$(TEST_CMD)" = "echo 'No test command detected' && exit 1" ]; then
+                echo "##vso[task.logissue type=warning]No tests detected."
+                if [ "$(ALLOW_NO_TESTS)" = "true" ]; then
+                  exit 0
+                fi
+                exit 1
+              fi
+              $(TEST_CMD)
+            displayName: Run repository tests
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/*junit*.xml'
+              failTaskOnFailedTests: true
+          - task: PublishCodeCoverageResults@2
+            condition: succeededOrFailed()
+            inputs:
+              summaryFileLocation: '$(Build.SourcesDirectory)/coverage.xml'
+              pathToSources: '$(Build.SourcesDirectory)'
+
+  - stage: Deploy
+    displayName: Deploy
+    dependsOn:
+      - Scan
+      - Test
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployStaging
+        displayName: Deploy to staging
+        environment: staging
+        timeoutInMinutes: 20
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifactName: 'build-$(Build.BuildId)'
+                    targetPath: '$(Pipeline.Workspace)/artifact'
+                - script: |
+                    set -eux
+                    if [ "$(DEPLOY_ENABLED)" != "true" ]; then
+                      echo "##vso[task.logissue type=warning]Deployment skipped: DEPLOY_ENABLED is not true."
+                      exit 0
+                    fi
+                    if [ -z "$(DEPLOY_TARGET)" ] || [ "$(DEPLOY_TARGET)" = "unknown" ]; then
+                      echo "##vso[task.logissue type=error]Deployment target is unknown. Set DEPLOY_TARGET and DEPLOY_ENABLED=true."
+                      exit 1
+                    fi
+                    echo "Deploying artifact from $(Pipeline.Workspace)/artifact to $(DEPLOY_TARGET)"
+                    # Deployment implementation is platform-specific and must be configured by the service connection / environment.
+                  displayName: Deploy staging artifact
+
+      - deployment: DeployProduction
+        displayName: Deploy to production
+        dependsOn: DeployStaging
+        environment: production
+        timeoutInMinutes: 25
+        condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifactName: 'build-$(Build.BuildId)'
+                    targetPath: '$(Pipeline.Workspace)/deploy'
+                - script: |
+                    set -eux
+                    if [ "$(DEPLOY_ENABLED)" != "true" ]; then
+                      echo "##vso[task.logissue type=warning]Production deploy skipped: DEPLOY_ENABLED is not true."
+                      exit 0
+                    fi
+                    if [ -z "$(DEPLOY_TARGET)" ] || [ "$(DEPLOY_TARGET)" = "unknown" ]; then
+                      echo "##vso[task.logissue type=error]Production deployment target is unknown; required deployment target must be configured."
+                      exit 1
+                    fi
+                    echo "Deploying exact staging artifact to production target $(DEPLOY_TARGET)"
+                  displayName: Promote staging artifact to production
+
+      - job: HealthCheck
+        displayName: Post-deploy health check
+        dependsOn: DeployProduction
+        timeoutInMinutes: 10
+        pool:
+          vmImage: ubuntu-latest
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['DEPLOY_ENABLED'], 'true'))
+        steps:
+          - script: |
+              set -eux
+              curl --fail --retry 5 --retry-delay 2 --connect-timeout 5 "https://$(DEPLOY_TARGET)"
+            displayName: Verify deployed service health
+
+# Example ready-to-uncomment AzureWebApp deployment block:
+# - task: AzureWebApp@1
+#   inputs:
+#     azureSubscription: 'my-service-connection'
+#     appType: 'webApp'
+#     appName: '$(DEPLOY_TARGET)'
+#     package: '$(Pipeline.Workspace)/deploy'
+#   displayName: Deploy to Azure Web App
+# - script: |
+#     set -eux
+#     curl --fail --retry 5 --retry-delay 2 --connect-timeout 5 "https://$(DEPLOY_TARGET)"
+#   displayName: Health check

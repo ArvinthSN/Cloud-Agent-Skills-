@@ -1,0 +1,1 @@
+{"name":"nodejs-webapp","version":"1.0.0","dependencies":{"express":"^4.19.0","pg":"^8.12.0","dotenv":"^16.4.0"}}

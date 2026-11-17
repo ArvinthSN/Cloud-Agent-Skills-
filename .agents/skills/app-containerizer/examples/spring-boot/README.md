@@ -1,0 +1,1 @@
+Illustrative Spring Boot Maven fixture. Add an application class under src/main/java before building.\n

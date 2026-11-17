@@ -1,0 +1,160 @@
+# pipeline.yml - GitHub Actions skeleton (place at .github/workflows/pipeline.yml)
+# Replace the <PLACEHOLDERS> after detecting the stack. Stages: build -> scan -> test -> deploy
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}   # never cancel a running deploy
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  SEVERITY_THRESHOLD: "HIGH,CRITICAL"
+
+jobs:
+  # ---------------------------------------------------------------- BUILD
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      # <SETUP_STEP> e.g. actions/setup-node@v4 with cache: npm
+      # <INSTALL_STEP> e.g. npm ci
+      # <BUILD_STEP>   e.g. npm run build
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ----------------------------------------------------------------- SCAN
+  scan-secrets:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  scan-dependencies-and-iac:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig
+          severity: ${{ env.SEVERITY_THRESHOLD }}
+          exit-code: "1"
+
+  scan-sast:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: <CODEQL_LANGUAGE>   # javascript-typescript | python | java-kotlin | go | csharp | ruby
+      - uses: github/codeql-action/analyze@v3
+
+  scan-image:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image-tag }}
+          severity: ${{ env.SEVERITY_THRESHOLD }}
+          exit-code: "1"
+
+  # ----------------------------------------------------------------- TEST
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # <SETUP_STEP>
+      # <INSTALL_STEP>
+      - name: Unit tests
+        run: <UNIT_TEST_COMMAND>
+      # - name: Integration tests
+      #   run: <INTEGRATION_TEST_COMMAND>
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            coverage/
+            **/test-results/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------- DEPLOY
+  deploy-staging:
+    needs: [scan-secrets, scan-dependencies-and-iac, scan-sast, scan-image, test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write          # OIDC to cloud provider - no long-lived keys
+    steps:
+      - uses: actions/checkout@v4
+      # <CLOUD_AUTH_STEP>  e.g. aws-actions/configure-aws-credentials@v4 with role-to-assume
+      - name: Deploy to staging
+        run: echo "TODO deploy ${{ needs.build.outputs.image-tag }} to staging"   # <DEPLOY_COMMAND>
+
+  deploy-production:
+    needs: deploy-staging
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production     # configure required reviewers on this environment = manual approval
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to production
+        run: echo "TODO promote same image to production"   # <DEPLOY_COMMAND>

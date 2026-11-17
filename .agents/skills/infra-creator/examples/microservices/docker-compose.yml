@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  api:
+    build: ./services/api
+    environment: [DATABASE_URL=postgresql://x, REDIS_URL=redis://redis:6379]
+  worker:
+    build: ./services/worker
+    environment: [REDIS_URL=redis://redis:6379, QUEUE_NAME=jobs]
+  redis:
+    image: redis:7

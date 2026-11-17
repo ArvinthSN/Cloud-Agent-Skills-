@@ -1,0 +1,33 @@
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildApp
+        timeoutInMinutes: 15
+        steps:
+          - script: echo "build"
+  - stage: Scan
+    jobs:
+      - job: SecurityScan
+        timeoutInMinutes: 15
+        steps:
+          - script: |
+              trivy fs --severity HIGH,CRITICAL . || true
+          - uses: aquase/trivy-action@main
+  - stage: Test
+    jobs:
+      - job: RunTests
+        timeoutInMinutes: 15
+        steps:
+          - script: pytest -q
+  - stage: Deploy
+    jobs:
+      - deployment: DeployProduction
+        environment: production
+        timeoutInMinutes: 15
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "deploying"
+                - script: echo "done"

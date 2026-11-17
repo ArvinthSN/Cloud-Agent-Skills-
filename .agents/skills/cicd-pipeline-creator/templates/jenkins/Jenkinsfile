@@ -1,0 +1,170 @@
+// Source: jenkins.io/doc/book/pipeline/ (declarative syntax) + vendor docs for gitleaks/trivy
+// Fetched: '@@FETCH_DATE@@'   Upstream ref: '@@UPSTREAM_REF@@'
+// TODO(verify): confirm plugin IDs (junit, workflow-basic-steps, ws-cleanup, pipeline-input-step)
+pipeline {
+    agent none
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES')            // hard cap; each stage sets its own below
+        timestamps()
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds(abortPrevious: false) // never abort a running deploy
+    }
+
+    parameters {
+        booleanParam(name: 'DEPLOY_ENABLED', defaultValue: false, description: 'Must be true to deploy')
+        booleanParam(name: 'ALLOW_NO_TESTS', defaultValue: false, description: 'Allow a green run with zero tests')
+    }
+
+    environment {
+        CI = 'true'
+        PIP_CACHE_DIR   = "${env.HOME}/.cache/pip"    // persistent agents only; see notes
+        npm_config_cache = "${env.HOME}/.npm"
+    }
+
+    stages {
+        stage('Build') {
+            agent { label '@@AGENT_LABEL@@' }
+            options { timeout(time: 15, unit: 'MINUTES') }
+            steps {
+                checkout scm
+                dir('@@WORKING_DIR@@') {
+                    sh '@@INSTALL_CMD@@'
+                    sh '@@BUILD_CMD@@'
+                }
+                stash name: 'build-artifact', includes: '@@ARTIFACT_PATH@@/**'
+                archiveArtifacts artifacts: '@@ARTIFACT_PATH@@/**', fingerprint: true, onlyIfSuccessful: true
+            }
+        }
+
+        stage('Scan and Test') {
+            parallel {
+                stage('Scan') {
+                    agent { label '@@AGENT_LABEL@@' }
+                    options { timeout(time: 20, unit: 'MINUTES') }
+                    steps {
+                        checkout scm
+                        sh '''
+                            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+                              git fetch --unshallow
+                            fi
+                        '''
+                        // Scanners run from official images (no pip/npm installs of Go binaries)
+                        sh '''
+                            docker run --rm -v "$PWD:/repo" \
+                              ghcr.io/gitleaks/gitleaks:@@GITLEAKS_VERSION@@ \
+                              detect --source /repo --redact --exit-code 1
+                        '''                                  // TODO(verify): image name, tag, subcommand
+                        sh '''
+                            docker run --rm -v "$PWD:/repo" -e TRIVY_CACHE_DIR=/tmp/trivy \
+                              aquasec/trivy:@@TRIVY_VERSION@@ \
+                              fs --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed /repo
+                        '''                                  // TODO(verify): image name and tag
+                    }
+                }
+
+                stage('Test') {
+                    agent { label '@@AGENT_LABEL@@' }
+                    options { timeout(time: 20, unit: 'MINUTES') }
+                    steps {
+                        checkout scm
+                        dir('@@WORKING_DIR@@') {
+                            sh '@@INSTALL_CMD@@'             // reinstall: tests need dev deps the artifact lacks
+                            sh '''
+                                if [ '@@TEST_CMD@@' = 'NO_TESTS_DETECTED' ]; then
+                                  if [ "$ALLOW_NO_TESTS" = "true" ]; then
+                                    echo "WARNING: no tests detected, continuing because ALLOW_NO_TESTS=true"
+                                    exit 0
+                                  fi
+                                  echo "ERROR: no tests detected. Add tests or set ALLOW_NO_TESTS=true"
+                                  exit 1
+                                fi
+                                @@TEST_CMD@@
+                            '''
+                        }
+                    }
+                    post {
+                        always {
+                            junit testResults: '@@TEST_REPORT_GLOB@@', allowEmptyResults: false
+                            // coverage publishing: add the Coverage plugin step here. TODO(verify)
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy gate') {
+            agent none
+            when { allOf { branch 'main'; not { changeRequest() } } }
+            steps {
+                script {
+                    if (params.DEPLOY_ENABLED != true) {
+                        unstable('Deploy skipped: set parameter DEPLOY_ENABLED=true')
+                        env.DEPLOY_SKIPPED = 'true'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy staging') {
+            agent { label '@@AGENT_LABEL@@' }
+            when {
+                beforeAgent true
+                allOf { branch 'main'; not { changeRequest() }; expression { env.DEPLOY_SKIPPED != 'true' } }
+            }
+            options { timeout(time: 20, unit: 'MINUTES') }
+            steps {
+                unstash 'build-artifact'
+                withCredentials([string(credentialsId: '@@DEPLOY_CREDENTIALS_ID@@', variable: 'DEPLOY_TOKEN')]) {
+                    sh '''
+                        test -n "$DEPLOY_TOKEN"
+                        @@DEPLOY_CMD_STAGING@@
+                    '''
+                    // Azure example (uncomment, needs az CLI + service principal credentials):
+                    // az webapp deploy --name "$APP" --resource-group "$RG" --slot staging --src-path artifact.zip --type zip
+                }
+                sh 'curl --fail --retry 5 --retry-delay 5 --retry-all-errors "@@STAGING_HEALTH_URL@@"'
+            }
+        }
+
+        stage('Approve production') {
+            agent none                                      // do not hold an executor while waiting
+            when {
+                beforeInput true
+                allOf { branch 'main'; not { changeRequest() }; expression { env.DEPLOY_SKIPPED != 'true' } }
+            }
+            options { timeout(time: 1, unit: 'HOURS') }
+            input {
+                message 'Promote this build to production?'
+                submitter '@@APPROVERS@@'                  // users or groups allowed to approve
+            }
+            steps { echo "Approved by ${env.BUILD_USER_ID ?: 'approver'}" }
+        }
+
+        stage('Deploy production') {
+            agent { label '@@AGENT_LABEL@@' }
+            when {
+                beforeAgent true
+                allOf { branch 'main'; not { changeRequest() }; expression { env.DEPLOY_SKIPPED != 'true' } }
+            }
+            options { timeout(time: 20, unit: 'MINUTES') }
+            steps {
+                unstash 'build-artifact'                    // same artifact staging received
+                withCredentials([string(credentialsId: '@@DEPLOY_CREDENTIALS_ID@@', variable: 'DEPLOY_TOKEN')]) {
+                    sh '''
+                        test -n "$DEPLOY_TOKEN"
+                        @@DEPLOY_CMD_PRODUCTION@@
+                    '''
+                }
+                sh 'curl --fail --retry 5 --retry-delay 5 --retry-all-errors "@@PRODUCTION_HEALTH_URL@@"'
+            }
+        }
+    }
+
+    post {
+        failure  { echo "Pipeline failed at ${env.STAGE_NAME ?: 'unknown stage'}. See stage logs." }
+        unstable { echo 'Pipeline unstable: check warnings (for example deploy skipped).' }
+        cleanup  { node('@@AGENT_LABEL@@') { cleanWs() } }  // TODO(verify): Workspace Cleanup plugin required
+    }
+}

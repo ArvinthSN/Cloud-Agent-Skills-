@@ -1,0 +1,75 @@
+version: 2.1
+
+workflows:
+  build_scan_test_deploy:
+    jobs:
+      - build
+      - scan:
+          requires:
+            - build
+      - test:
+          requires:
+            - build
+      - deploy:
+          requires:
+            - scan
+            - test
+          filters:
+            branches:
+              only:
+                - main
+
+jobs:
+  build:
+    docker:
+      - image: cimg/base:stable
+    working_directory: ~/repo
+    no_output_timeout: 15m
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies and build artifact
+          command: |
+            echo "TODO: install locked dependencies"
+            echo "TODO: build/package application"
+      - store_artifacts:
+          path: ./dist
+          destination: build-artifact
+
+  scan:
+    docker:
+      - image: cimg/base:stable
+    no_output_timeout: 15m
+    steps:
+      - checkout
+      - run:
+          name: Security scanning
+          command: |
+            echo "TODO: secret scanning"
+            echo "TODO: dependency/SCA scanning"
+            echo "TODO: SAST and container/IaC scanning when applicable"
+
+  test:
+    docker:
+      - image: cimg/base:stable
+    no_output_timeout: 20m
+    steps:
+      - checkout
+      - run:
+          name: Run tests
+          command: 'echo "TODO: detected unit/integration test commands"'
+      - store_test_results:
+          path: ./test-results
+      - store_artifacts:
+          path: ./coverage
+          destination: test-coverage
+
+  deploy:
+    docker:
+      - image: cimg/base:stable
+    no_output_timeout: 20m
+    steps:
+      - checkout
+      - run:
+          name: Deploy production artifact
+          command: 'echo "TODO: deploy built artifact to configured target"'

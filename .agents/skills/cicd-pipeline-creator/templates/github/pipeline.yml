@@ -1,0 +1,108 @@
+# Source: adapted from github.com/actions/starter-workflows + vendor READMEs
+# Fetched: @@FETCH_DATE@@   Upstream ref: @@UPSTREAM_REF@@
+# TODO(verify): resolve every tag below to a commit SHA, keep the tag as a comment
+name: CI-CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '@@PYTHON_VERSION@@' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '@@NODE_VERSION@@' }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.npm
+          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-deps-
+      - run: @@INSTALL_CMD@@
+        working-directory: @@WORKING_DIR@@
+      - run: @@BUILD_CMD@@
+        working-directory: @@WORKING_DIR@@
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.run_id }}
+          path: @@ARTIFACT_PATH@@        # real build output only
+          if-no-files-found: error
+
+  scan:                                  # source/dependency scan: needs no build artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: gitleaks/gitleaks-action@v2        # TODO(verify): pin SHA; orgs need GITLEAKS_LICENSE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      - uses: aquasecurity/trivy-action@0.28.0   # TODO(verify): pin SHA
+        with:
+          scan-type: fs
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '@@PYTHON_VERSION@@' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '@@NODE_VERSION@@' }
+      - uses: actions/cache@v4              # reinstall: tests need dev deps the artifact lacks
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.npm
+          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-deps-
+      - run: @@INSTALL_CMD@@
+        working-directory: @@WORKING_DIR@@
+      - name: Run tests
+        env:
+          ALLOW_NO_TESTS: ${{ vars.ALLOW_NO_TESTS }}
+        run: @@TEST_CMD@@                   # no tests detected -> render emits warning + fail unless ALLOW_NO_TESTS=true
+        working-directory: @@WORKING_DIR@@
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_id }}
+          path: @@TEST_REPORT_PATH@@        # junit xml + coverage only
+          if-no-files-found: warn
+
+  deploy-gate:
+    needs: [scan, test]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.g.outputs.enabled }}
+    steps:
+      - id: g
+        env: { DEPLOY_ENABLED: '${{ vars.DEPLOY_ENABLED }}' }
+        run: |
+          if [ "$DEPLOY_ENABLED" =

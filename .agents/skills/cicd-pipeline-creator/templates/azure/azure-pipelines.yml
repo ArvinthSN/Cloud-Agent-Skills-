@@ -1,0 +1,184 @@
+# Source: learn.microsoft.com/azure/devops/pipelines (YAML schema) + publisher docs for gitleaks/trivy
+# Fetched: '@@FETCH_DATE@@'   Upstream ref: '@@UPSTREAM_REF@@'
+# TODO(verify): task versions, scanner image tags/subcommands, AzureWebApp@1 and AzureAppServiceManage@0 inputs
+# Pipeline UI / variable group (NOT in this file): DEPLOY_ENABLED, ALLOW_NO_TESTS,
+#   DEPLOY_TARGET (app name), DEPLOY_RESOURCE_GROUP, STAGING_URL, PRODUCTION_URL
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-24.04
+
+variables:
+  PIP_CACHE_DIR: $(Pipeline.Workspace)/.cache/pip
+  npm_config_cache: $(Pipeline.Workspace)/.npm
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        timeoutInMinutes: 20
+        steps:
+          - checkout: self
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '@@PYTHON_VERSION@@' }
+          - task: NodeTool@0
+            inputs: { versionSpec: '@@NODE_VERSION@@' }
+          - task: Cache@2
+            inputs:
+              key: 'deps | "$(Agent.OS)" | @@LOCKFILE@@'
+              path: '@@CACHE_PATH@@'
+          - script: |
+              set -eu
+              @@INSTALL_CMD@@
+              @@BUILD_CMD@@
+            workingDirectory: '@@WORKING_DIR@@'
+            displayName: Install and build
+          - script: |
+              test -n "$(ls -A '@@ARTIFACT_PATH@@' 2>/dev/null)" || { echo "##vso[task.logissue type=error]Build output is empty"; exit 1; }
+            displayName: Verify build output
+          - publish: '@@ARTIFACT_PATH@@'          # repo-root relative, real build output only
+            artifact: build
+
+  - stage: Scan
+    dependsOn: []                                   # source scans: run in parallel with Build
+    jobs:
+      - job: SecretScan
+        timeoutInMinutes: 15
+        steps:
+          - checkout: self
+            fetchDepth: 0                           # full history
+          - script: |
+              set -eu
+              docker run --rm -v "$(Build.SourcesDirectory):/repo" \
+                ghcr.io/gitleaks/gitleaks:@@GITLEAKS_VERSION@@ \
+                detect --source /repo --redact --exit-code 1
+            displayName: Gitleaks                   # TODO(verify): image path, subcommand
+      - job: DependencyScan
+        timeoutInMinutes: 15
+        steps:
+          - checkout: self
+          - script: |
+              set -eu
+              docker run --rm -v "$(Build.SourcesDirectory):/repo" \
+                aquasec/trivy:@@TRIVY_VERSION@@ \
+                fs --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed /repo
+            displayName: Trivy                      # TODO(verify): image path, tag
+
+  - stage: Test
+    dependsOn: Build
+    jobs:
+      - job: Test
+        timeoutInMinutes: 25
+        steps:
+          - checkout: self
+          - task: UsePythonVersion@0
+            inputs: { versionSpec: '@@PYTHON_VERSION@@' }
+          - task: NodeTool@0
+            inputs: { versionSpec: '@@NODE_VERSION@@' }
+          - task: Cache@2
+            inputs:
+              key: 'deps | "$(Agent.OS)" | @@LOCKFILE@@'
+              path: '@@CACHE_PATH@@'
+          - script: '@@INSTALL_CMD@@'               # reinstall: tests need dev deps the artifact lacks
+            workingDirectory: '@@WORKING_DIR@@'
+            displayName: Install dependencies
+          - script: |
+              set -eu
+              if [ '@@TEST_CMD@@' = 'NO_TESTS_DETECTED' ]; then
+                echo "##vso[task.logissue type=warning]No tests detected."
+                if [ "${ALLOW_NO_TESTS:-}" = "true" ]; then exit 0; fi
+                echo "##vso[task.logissue type=error]No tests detected. Add tests or set ALLOW_NO_TESTS=true."
+                exit 1
+              fi
+              @@TEST_CMD@@
+            workingDirectory: '@@WORKING_DIR@@'
+            env:
+              ALLOW_NO_TESTS: $(ALLOW_NO_TESTS)     # env mapping avoids bash treating $(...) as a command
+            displayName: Run tests
+          - task: PublishTestResults@2              # renderer omits both publish steps when no tests exist
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: '@@TEST_REPORT_GLOB@@'
+              failTaskOnFailedTests: true
+              failTaskOnMissingResultsFile: true
+          - task: PublishCodeCoverageResults@2
+            condition: succeededOrFailed()
+            inputs:
+              summaryFileLocation: '@@COVERAGE_REPORT@@'
+
+  - stage: Deploy
+    dependsOn: [Build, Scan, Test]
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DeployNotice                           # a skipped deploy shows orange, never plain green
+        condition: and(succeeded(), ne(variables['DEPLOY_ENABLED'], 'true'))
+        timeoutInMinutes: 5
+        steps:
+          - script: |
+              echo "##vso[task.logissue type=warning]Deploy skipped: set pipeline variable DEPLOY_ENABLED=true."
+              echo "##vso[task.complete result=SucceededWithIssues;]DONE"
+
+      - deployment: Staging
+        condition: and(succeeded(), eq(variables['DEPLOY_ENABLED'], 'true'))
+        environment: staging
+        timeoutInMinutes: 20
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: build
+                - script: |
+                    set -eu
+                    need() { case "$2" in ''|\$*) echo "##vso[task.logissue type=error]$1 is not set"; exit 1;; esac; }
+                    need DEPLOY_TARGET "$DEPLOY_TARGET"
+                    need DEPLOY_RESOURCE_GROUP "$DEPLOY_RESOURCE_GROUP"
+                    need STAGING_URL "$STAGING_URL"
+                  env:
+                    DEPLOY_TARGET: $(DEPLOY_TARGET)
+                    DEPLOY_RESOURCE_GROUP: $(DEPLOY_RESOURCE_GROUP)
+                    STAGING_URL: $(STAGING_URL)
+                  displayName: Require deploy config
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: '@@SERVICE_CONNECTION@@'   # plain connection name, workload identity federation
+                    appType: '@@APP_TYPE@@'                       # webAppLinux or webApp
+                    appName: '$(DEPLOY_TARGET)'
+                    deployToSlotOrASE: true
+                    resourceGroupName: '$(DEPLOY_RESOURCE_GROUP)'
+                    slotName: staging
+                    package: '$(Pipeline.Workspace)/build'
+                - script: curl --fail --retry 5 --retry-delay 5 --retry-all-errors "$STAGING_URL"
+                  env:
+                    STAGING_URL: $(STAGING_URL)
+                  displayName: Staging health check
+
+      - deployment: Production
+        dependsOn: Staging
+        condition: and(succeeded(), eq(variables['DEPLOY_ENABLED'], 'true'))
+        environment: production                     # required approvers are configured on this environment
+        timeoutInMinutes: 25
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureAppServiceManage@0     # swap promotes the exact bits staging received
+                  inputs:
+                    azureSubscription: '@@SERVICE_CONNECTION@@'
+                    Action: 'Swap Slots'
+                    WebAppName: '$(DEPLOY_TARGET)'
+                    ResourceGroupName: '$(DEPLOY_RESOURCE_GROUP)'
+                    SourceSlot: staging
+                    SwapWithProduction: true
+                - script: curl --fail --retry 5 --retry-delay 5 --retry-all-errors "$PRODUCTION_URL"
+                  env:
+                    PRODUCTION_URL: $(PRODUCTION_URL)
+                  displayName: Production health check
