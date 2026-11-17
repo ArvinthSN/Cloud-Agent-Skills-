@@ -2,31 +2,31 @@
 
 A modular, safety-first cloud engineering skill set for analyzing application repositories and producing container, CI/CD and infrastructure artifacts.
 
-The project is designed around a small shared harness: consistent skill contracts, compact context handoffs, approval gates and honest validation reports. Specialist skills remain independently invocable.
+The project is designed around a shared execution harness: bounded project discovery, versioned JSON contracts, compact specialist handoffs, explicit approval gates, dependency-aware orchestration and recoverable local file transactions. Specialist skills remain independently invocable.
 
 ## Current capabilities
 
 | Skill | Responsibility | Current implementation |
 |---|---|---|
-| app-containerizer | Inspect apps and generate Docker assets | Python, Node.js and Java heuristics; Dockerfile, Compose and static checks |
-| cicd-pipeline-creator | Render and validate CI/CD workflows | Generated output currently wired for GitHub Actions and Azure DevOps |
-| infra-creator | Plan and generate Terraform | AWS, Azure and GCP container-focused templates |
+| app-containerizer | Inspect apps and generate Docker assets | Python, Node.js and Java detection; supported package-manager-aware Dockerfiles, Compose and static checks |
+| cicd-pipeline-creator | Render and validate CI/CD workflows | Integrated renderers for GitHub Actions, Azure DevOps, GitLab CI, Jenkins and CircleCI |
+| infra-creator | Plan and generate Terraform | AWS ECS Fargate, Azure Container Apps and GCP Cloud Run container-focused templates |
 
-Templates for GitLab CI, Jenkins and CircleCI are present as starter assets. They are not yet fully integrated into the automated renderer and must not be presented as production-validated outputs.
+The CI renderers produce reviewable local files. Platform-native linting and actual pipeline runs still require each target provider. Terraform generation and validation do not provision cloud infrastructure.
 
 ## Repository layout
 
 - AGENTS.md — repository-wide safety, workflow and context rules.
 - .agents/standards/ — shared skill, output and token-efficiency contracts.
-- .agents/schemas/ — machine-readable execution-plan and execution-report schemas.
+- .agents/schemas/ — versioned project-context, plan, handoff, report and execution-state schemas.
 - .agents/skills/ — specialist skills and their scripts, templates, references and tests.
-- .github/workflows/ — repository quality checks.
+- .github/workflows/ — cross-platform repository quality checks.
 
 ## Executable orchestration
 
-The Cloud Engineering Orchestrator creates a single bounded project scan and versioned JSON handoffs for the selected specialist skills.
+The Cloud Engineering Orchestrator creates one bounded project scan and versioned JSON handoffs for the selected specialist skills.
 
-```bash
+~~~bash
 python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py plan \
   --project ./my-app \
   --goal "Containerize the app and prepare CI plus Terraform" \
@@ -35,39 +35,67 @@ python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py plan
   --platform github \
   --run-dir ./.cloud-agent/runs/my-app
 
-# Review the plan and each handoff before approving local generation.
+# Review execution-plan.json, project-context.json and every handoff before approval.
 python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \
   --run-dir ./.cloud-agent/runs/my-app \
   --approve
-```
+~~~
 
-Use `--project-dir backend` for monorepos, `--compose-services postgresql,redis` only for explicitly selected local dependencies, and `--overwrite` only when replacing existing generated files. Use `--no-cache` to disable reusable project context or `--cache-dir /path/to/cache` to choose an external cache directory.
+Use --project-dir backend for monorepos, --compose-services postgresql,redis only for explicitly selected local dependencies, and --overwrite only when replacing existing generated files. Use --no-cache to disable reusable project context or --cache-dir to select another cache directory.
 
-Each run is protected by a cross-process execution lock and a durable state journal. When a process is interrupted, use `resume --run-dir ./.cloud-agent/runs/my-app --approve` to restore its output snapshot and restart the complete workflow, or `recover --run-dir ./.cloud-agent/runs/my-app --approve` to restore without retrying. A resume requires explicit approval again and does not trust partial outputs from the interrupted attempt. The `.cloud-agent/` run directory is ignored by repository scans.
+Each execution uses two levels of non-blocking OS locks: one for the run directory and one shared by executions targeting the same project root. The durable state journal records transaction phase and recovery metadata. When a process is interrupted, use resume --run-dir ./.cloud-agent/runs/my-app --approve to restore the pre-run snapshot and restart the complete workflow, or recover --run-dir ./.cloud-agent/runs/my-app --approve to restore without retrying. Resume requires approval again and does not trust partial outputs from the interrupted attempt.
 
-The run contains `project-context.json`, `execution-plan.json`, `handoffs/` and `execution-report.json`. Execution follows a validated dependency graph: when containerization is selected, CI/CD and infrastructure generation wait for it to complete. A failed, blocked or partial workflow triggers rollback of all generated project outputs. Context cache entries are reused only for an identical root, scanner version and full content snapshot; the project is still fingerprinted to detect changes. Use `--no-cache` to opt out. Install the runtime schema validator with `python -m pip install jsonschema`. Execution writes local artifacts only; it never applies Terraform, provisions cloud resources, deploys, publishes images or pushes commits.
+The run contains project-context.json, execution-plan.json, handoffs/ and execution-report.json. Execution follows a validated dependency graph: when containerization is selected, CI/CD and infrastructure generation wait for it to complete. A failed, blocked or partial workflow rolls back the declared generated output paths to their pre-run state. The context cache is reused only for an identical project root, scanner version and full content snapshot; project freshness is still verified. Install jsonschema with python -m pip install jsonschema. Execution writes local artifacts only; it never applies Terraform, provisions cloud resources, deploys, publishes images or pushes commits.
 
-## Quick start
+## CI/CD platform generation
 
-Each skill has its own SKILL.md with invocation guidance and examples.
+The CI/CD renderer supports five explicit platform arguments:
 
-For local Python checks, install pytest and run:
-- python -m compileall -q .agents/skills
-- pytest -q .agents/skills/app-containerizer/tests .agents/skills/infra-creator/tests
-- python .agents/skills/cicd-pipeline-creator/scripts/test_examples.py
+~~~bash
+python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app github --out ./my-app/.github/workflows
+python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app azure --out ./my-app
+python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app gitlab --out ./my-app
+python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app jenkins --out ./my-app
+python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app circleci --out ./my-app
+~~~
 
-Run Terraform validation only where the Terraform CLI is installed. Static validation does not prove cloud resources can be provisioned.
+Current application-build coverage is Python (pip, Poetry, uv) and Node.js (npm with package-lock.json). Other stacks and package managers are rejected rather than guessed. GitHub Actions dependencies in the generated template are pinned to full commit SHAs. Other platform templates use explicit scanner/runtime image tags; pin approved production images to registry digests as part of provider rollout.
+
+Generated deployment stages remain disabled or fail closed until target-specific deployment commands, credentials/workload identity and protected environments are configured. The renderer does not create provider-side secrets or environments.
+
+## Quick start and tests
+
+Install the shared test dependencies:
+
+~~~bash
+python -m pip install pytest pyyaml jsonschema
+python -m compileall -q .agents/skills
+pytest -q tests/harness
+pytest -q .agents/skills/app-containerizer/tests
+pytest -q .agents/skills/infra-creator/tests
+pytest -q .agents/skills/cicd-pipeline-creator/tests
+python .agents/skills/cicd-pipeline-creator/scripts/test_examples.py
+~~~
+
+The CI workflow runs the suite on Python 3.11 and 3.12 across Ubuntu, Windows and macOS. Terraform CLI validation runs only where the CLI is installed. Provider-native validation and controlled integration tests are separate release gates.
 
 ## Engineering principles
 
 1. Inspect before generating.
 2. Evidence before assumptions.
 3. Approval before destructive or external actions.
-4. Reuse structured context between skills.
+4. Reuse validated structured context between skills.
 5. Validate generated artifacts with native tools when available.
 6. Report PASS, FAIL, WARNING, SKIPPED and NOT_RUN accurately.
 7. Never deploy or provision as an implicit side effect.
+8. Keep generated artifacts reviewable, deterministic and recoverable.
 
-## Status and limitations
+## Known boundaries
 
-This repository is actively being hardened. A template is not automatically a supported generator. A successful YAML parse is not proof that a pipeline executes. Terraform validation is not a deployment. Cloud-specific behavior still requires provider credentials and an approved environment.
+- Project detection is heuristic; review detected facts and generated commands before approval.
+- Locking is local-filesystem and project-root scoped. It is not a distributed lock for remote workers or a shared filesystem with unsupported locking semantics.
+- Resume restores the original snapshot and reruns the complete workflow; it is not checkpoint-level continuation.
+- The app containerizer's static validation is not an image build unless Docker build is explicitly requested.
+- GitLab CI Lint, CircleCI CLI, Jenkins controller validation and Azure DevOps runs require provider-specific environments.
+- Terraform fmt/init/validate is not a security audit, deployment or proof that cloud quotas, IAM, policies and networking are correct.
+- Actual production readiness requires provider-native integration tests, review of image digests/action pins, security policy checks, observability and a controlled cloud deployment rehearsal.
