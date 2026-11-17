@@ -30,6 +30,7 @@ jobs:
     steps:
       - run: pytest
   deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: production
