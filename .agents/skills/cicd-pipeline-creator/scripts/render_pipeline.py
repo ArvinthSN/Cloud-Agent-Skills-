@@ -61,7 +61,7 @@ def detect_values(repo: Path, project_dir: str | None = None) -> dict:
     if not install or not build or str(install).lstrip().startswith("echo ") or str(build).lstrip().startswith("echo "):
         raise SystemExit(
             "A real install and artifact-producing build command could not be detected. "
-            "Add a locked project manifest and build configuration before rendering."
+            "Use a supported manifest and configure an artifact-producing build before rendering."
         )
 
     version = str(project.get("version") or ("3.11" if lang == "python" else "20"))
