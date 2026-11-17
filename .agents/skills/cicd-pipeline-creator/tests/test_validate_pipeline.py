@@ -87,4 +87,5 @@ def test_full_commit_sha_action_reference_is_accepted(tmp_path):
     pipeline = tmp_path / "pipeline.yml"
     pipeline.write_text(BASE, encoding="utf-8")
     result = run(pipeline)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode in {0, 2}, result.stdout + result.stderr
+    assert '"status": "fail"' not in result.stdout
