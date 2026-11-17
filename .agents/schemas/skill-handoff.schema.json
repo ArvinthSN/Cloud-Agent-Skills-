@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/skill-handoff.schema.json",
+  "title": "Cloud Agent Skills skill handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "skill",
+    "project_root",
+    "project_revision",
+    "snapshot_hash",
+    "goal",
+    "approval_required"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "skill": {
+      "enum": [
+        "app-containerizer",
+        "cicd-pipeline-creator",
+        "infra-creator"
+      ]
+    },
+    "project_root": { "type": "string", "minLength": 1 },
+    "project_revision": { "type": ["string", "null"] },
+    "snapshot_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "goal": { "type": "string", "minLength": 1 },
+    "approval_required": { "type": "boolean", "const": true },
+    "input": { "type": "object" },
+    "ci_project": { "type": "object" },
+    "platform": { "enum": ["github", "azure"] },
+    "provider": { "enum": ["aws", "azure", "gcp"] },
+    "compose_services": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["postgresql", "mysql", "redis"] }
+    },
+    "output_dir": { "type": "string" },
+    "outputs": { "type": "array", "items": { "type": "string" } },
+    "executed_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "skill": { "const": "app-containerizer" } } },
+      "then": {
+        "required": ["input", "compose_services", "outputs"]
+      }
+    },
+    {
+      "if": { "properties": { "skill": { "const": "cicd-pipeline-creator" } } },
+      "then": {
+        "required": ["ci_project", "platform", "output_dir", "outputs"]
+      }
+    },
+    {
+      "if": { "properties": { "skill": { "const": "infra-creator" } } },
+      "then": {
+        "required": ["input", "provider", "output_dir", "outputs"]
+      }
+    }
+  ]
+}
