@@ -22,6 +22,29 @@ Templates for GitLab CI, Jenkins and CircleCI are present as starter assets. The
 - .agents/skills/ — specialist skills and their scripts, templates, references and tests.
 - .github/workflows/ — repository quality checks.
 
+## Executable orchestration
+
+The Cloud Engineering Orchestrator creates a single bounded project scan and versioned JSON handoffs for the selected specialist skills.
+
+```bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py plan \
+  --project ./my-app \
+  --goal "Containerize the app and prepare CI plus Terraform" \
+  --skills app-containerizer,cicd-pipeline-creator,infra-creator \
+  --provider aws \
+  --platform github \
+  --run-dir ./.cloud-agent/runs/my-app
+
+# Review the plan and each handoff before approving local generation.
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \
+  --run-dir ./.cloud-agent/runs/my-app \
+  --approve
+```
+
+Use `--project-dir backend` for monorepos, `--compose-services postgresql,redis` only for explicitly selected local dependencies, and `--overwrite` only when replacing existing generated files. The `.cloud-agent/` run directory is ignored by repository scans.
+
+The run contains `project-context.json`, `execution-plan.json`, `handoffs/` and `execution-report.json`. Execution writes local artifacts only; it never applies Terraform, provisions cloud resources, deploys, publishes images or pushes commits.
+
 ## Quick start
 
 Each skill has its own SKILL.md with invocation guidance and examples.
