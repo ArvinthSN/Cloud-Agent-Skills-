@@ -165,7 +165,7 @@ def validate(path: str):
         errors.append("Missing dependency cache configuration")
 
     production_environment = re.search(
-        r"""environment\\s*:\\s*(?:['"]?production['"]?|[\\s\\S]{0,160}?\\bname\\s*:\\s*['"]?production['"]?)""",
+        r"""(?is)environment\s*:\s*(?:["']?production\b|[\s\S]{0,160}?\bname\s*:\s*["']?production\b)""",
         text,
         re.I,
     )
