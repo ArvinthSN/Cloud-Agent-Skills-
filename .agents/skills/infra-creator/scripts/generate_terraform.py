@@ -673,12 +673,21 @@ def generate_project(
         terraform apply -var-file=environments/dev/terraform.tfvars
         ```
 
-        ## Security
+        ## Required inputs and security defaults
 
-        - Never commit state files or secrets.
-        - Databases are not publicly accessible by default.
-        - Use secret stores for passwords in real deployments.
-        - Prefer remote state for shared environments.
+        - Set `container_image` to an image that has already been built and pushed. It must use an immutable `repository@sha256:<64-hex-digest>` reference; mutable tags such as `:latest` are rejected by the generated variable validation.
+        - AWS requires an ACM certificate ARN in `certificate_arn`. The public ALB redirects HTTP to HTTPS and terminates TLS on port 443.
+        - Azure Container Registry admin credentials are disabled. The Container App uses a user-assigned managed identity with AcrPull.
+        - Azure PostgreSQL uses a delegated subnet, private DNS zone and disabled public network access.
+        - Cloud Run invocation is authenticated by default. Set `allow_unauthenticated = true` only when public access is explicitly approved.
+        - Supply database passwords through a secret manager or protected `TF_VAR_db_password` environment variable. Never commit secrets or populated tfvars.
+        - Configure a remote state backend and state locking before shared team or production use. The generated backend blocks are examples only.
+
+        ## Operational notes
+
+        - Push the immutable image before applying the infrastructure. Terraform does not build or publish container images.
+        - Confirm provider quotas, IAM permissions, domain/DNS, certificate region, networking and backups in a controlled pre-production environment.
+        - Terraform fmt/init/validate and static policies are not proof of deployability or production readiness.
 
         ## Destroy
 
