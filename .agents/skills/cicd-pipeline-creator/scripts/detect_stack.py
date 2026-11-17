@@ -121,6 +121,8 @@ def detect_python(root: Path, dir_name: str, names: set[str], has_tests: bool):
     build_cmd = "python -m build --outdir dist" if has_package_metadata else None
     if build_cmd:
         install = "python -m pip install --upgrade build && " + install
+        if pm == "pip":
+            install += " && python -m pip install ."
     return {
         "dir": dir_name or ".",
         "lang": "python",
