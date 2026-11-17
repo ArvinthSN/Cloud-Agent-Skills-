@@ -75,7 +75,7 @@ def detect_node(root: Path, dir_name: str, names: set[str], has_tests: bool):
         "lang": "node",
         "pm": pm,
         "install": install,
-        "build": build_cmd or "npm run build",
+        "build": build_cmd,
         "test": test_cmd or ("npm test" if has_tests else None),
         "version": version,
         "lockfile": lock,
@@ -110,12 +110,23 @@ def detect_python(root: Path, dir_name: str, names: set[str], has_tests: bool):
             m = re.search(r'requires-python\s*=\s*"([^"]+)"', read_text(pyproject))
             if m:
                 version = m.group(1)
+    # Produce a real distributable only for projects with packaging metadata.
+    # A compile-only check must not be advertised as a deployable build artifact.
+    pyproject = root / dir_name / "pyproject.toml"
+    has_package_metadata = "setup.py" in names or (
+        pyproject.is_file() and (
+            "[build-system]" in read_text(pyproject) or "[project]" in read_text(pyproject)
+        )
+    )
+    build_cmd = "python -m build --outdir dist" if has_package_metadata else None
+    if build_cmd:
+        install = "python -m pip install --upgrade build && " + install
     return {
         "dir": dir_name or ".",
         "lang": "python",
         "pm": pm,
         "install": install,
-        "build": "python -m compileall .",
+        "build": build_cmd,
         "test": "pytest -q" if has_tests else None,
         "version": version,
         "lockfile": lock,
