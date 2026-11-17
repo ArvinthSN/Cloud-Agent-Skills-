@@ -123,6 +123,12 @@ jobs:
     timeout-minutes: 5
     environment: production
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-${{ github.run_id }}
+          path: ./artifact
+      - name: Verify downloaded build artifact
+        run: test -n "$(find ./artifact -type f -print -quit)"
       - name: Deployment remains disabled until a target-specific job is configured
         env:
           DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
