@@ -208,7 +208,10 @@ def validate(path: str):
     if re.search(r"AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|-----BEGIN (RSA|OPENSSH|DSA|EC|PGP) PRIVATE KEY-----|(?:password|secret|token|api[_-]?key)\s*[:=]\s*['\"][^'\"]+['\"]", text, re.I):
         errors.append("Hardcoded secret or private key found")
 
-    if "timeout" not in lower and "timeoutinminutes" not in lower and "timeout-minutes" not in lower:
+    if platform == "circleci":
+        if "no_output_timeout" not in lower:
+            errors.append("CircleCI run steps must set no_output_timeout to avoid indefinitely silent commands.")
+    elif "timeout" not in lower and "timeoutinminutes" not in lower and "timeout-minutes" not in lower:
         errors.append("Missing timeout on jobs")
 
     if "cache" not in lower and "actions/cache" not in lower and "cache@2" not in lower:
