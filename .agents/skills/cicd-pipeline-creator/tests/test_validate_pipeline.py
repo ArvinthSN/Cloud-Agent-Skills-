@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
-      - uses: actions/cache@v4
+      - uses: actions/cache@8ff5423e8b66eacab4e638ee52abbd2cb831366a
         with:
           path: ~/.cache
           key: sample
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@615b319bd27bb32c3d64dca6b6ed6974d5fbe653
 """
 
 
@@ -57,7 +57,7 @@ def test_warning_only_result_uses_exit_code_two(tmp_path):
 
 def test_consumed_artifact_removes_warning(tmp_path):
     pipeline = tmp_path / "pipeline.yml"
-    pipeline.write_text(BASE + "\n      - uses: actions/download-artifact@v4\n", encoding="utf-8")
+    pipeline.write_text(BASE + "\n      - uses: actions/download-artifact@0d2ec9d4cbcefe257d822f108de2a1f15f8da9f6\n", encoding="utf-8")
     result = run(pipeline)
     assert result.returncode == 0, result.stdout + result.stderr
     assert '"status": "pass"' in result.stdout
@@ -69,3 +69,22 @@ def test_blocking_error_uses_exit_code_one(tmp_path):
     result = run(pipeline)
     assert result.returncode == 1
     assert '"status": "fail"' in result.stdout
+
+
+def test_mutable_github_action_reference_is_rejected(tmp_path):
+    pipeline = tmp_path / "pipeline.yml"
+    unsafe = BASE.replace(
+        "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+        "actions/checkout@v7",
+    )
+    pipeline.write_text(unsafe, encoding="utf-8")
+    result = run(pipeline)
+    assert result.returncode == 1
+    assert "full 40-character commit SHA" in result.stdout
+
+
+def test_full_commit_sha_action_reference_is_accepted(tmp_path):
+    pipeline = tmp_path / "pipeline.yml"
+    pipeline.write_text(BASE, encoding="utf-8")
+    result = run(pipeline)
+    assert result.returncode == 0, result.stdout + result.stderr
