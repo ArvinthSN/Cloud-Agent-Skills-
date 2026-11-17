@@ -4,38 +4,183 @@
   "title": "Cloud Agent Skills execution plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "request", "project", "selected_skills", "approval_required"],
+  "required": [
+    "schema_version",
+    "request",
+    "project",
+    "selected_skills",
+    "approval_required"
+  ],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": {
+      "const": "1.0"
+    },
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["goal"],
+      "required": [
+        "goal"
+      ],
       "properties": {
-        "goal": { "type": "string", "minLength": 1 },
-        "constraints": { "type": "array", "items": { "type": "string" } }
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "project": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root"],
+      "required": [
+        "root"
+      ],
       "properties": {
-        "root": { "type": "string", "minLength": 1 },
-        "revision": { "type": ["string", "null"] },
-        "detected_stack": { "type": "array", "items": { "type": "string" } },
-        "architecture": { "type": ["string", "null"] },
-        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detected_stack": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "architecture": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "context_file": {
+          "type": "string"
+        },
+        "scanner_version": {
+          "type": "string"
+        }
       }
     },
     "selected_skills": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
       "uniqueItems": true
     },
-    "approval_required": { "type": "boolean" },
-    "assumptions": { "type": "array", "items": { "type": "string" } },
-    "blocked_on": { "type": "array", "items": { "type": "string" } }
+    "approval_required": {
+      "type": "boolean"
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_dir": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "aws",
+            "azure",
+            "gcp",
+            null
+          ]
+        },
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "github",
+            "azure",
+            null
+          ]
+        },
+        "compose_services": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "postgresql",
+              "mysql",
+              "redis"
+            ]
+          }
+        },
+        "output_root": {
+          "type": "string"
+        },
+        "ci_output": {
+          "type": "string"
+        },
+        "infra_output": {
+          "type": "string"
+        },
+        "overwrite_approved": {
+          "type": "boolean"
+        }
+      }
+    },
+    "handoffs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }
