@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Render a repo-specific pipeline template and write terse notes."""
+"""Render a reviewed CI/CD starter for one detected Python or Node.js project."""
 import argparse
+import datetime
 import json
 import re
 import subprocess
@@ -12,11 +13,23 @@ SUPPORTED = {
     "azure": ROOT / "templates" / "azure" / "azure-pipelines.yml",
     "github": ROOT / "templates" / "github" / "pipeline.yml",
 }
+SUPPORTED_LANGUAGES = {"python", "node"}
 
 
-def detect_values(repo: Path, project_dir: str | None = None):
-    proc = subprocess.run([sys.executable, str(ROOT / "scripts" / "detect_stack.py"), str(repo)], capture_output=True, text=True, check=True)
-    data = json.loads(proc.stdout)
+def detect_values(repo: Path, project_dir: str | None = None) -> dict:
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "detect_stack.py"), str(repo)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode:
+        raise SystemExit(f"Stack detection failed: {proc.stderr.strip() or proc.stdout.strip()}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Stack detector returned invalid JSON: {exc}") from exc
+
     projects = data.get("projects", [])
     if project_dir is not None:
         matches = [item for item in projects if item.get("dir") == project_dir]
@@ -30,35 +43,47 @@ def detect_values(repo: Path, project_dir: str | None = None):
         raise SystemExit(f"Monorepo detected. Select one project with --project-dir. Available: {choices}")
     else:
         raise SystemExit("No supported project manifest detected; refusing to generate placeholder commands.")
+
     lang = project.get("lang", "unknown")
-    version = project.get("version") or ("3.11" if lang == "python" else "20" if lang == "node" else "latest")
+    if lang not in SUPPORTED_LANGUAGES:
+        raise SystemExit(
+            f"Unsupported pipeline stack: {lang}. Renderer currently supports Python and Node.js only."
+        )
+
     install = project.get("install")
     build = project.get("build")
-    if not install or not build or str(install).startswith("echo ") or str(build).startswith("echo "):
-        raise SystemExit("Install/build commands could not be detected safely; refusing to generate echo placeholders.")
+    if not install or not build or str(install).lstrip().startswith("echo ") or str(build).lstrip().startswith("echo "):
+        raise SystemExit(
+            "A real install and artifact-producing build command could not be detected. "
+            "Add a locked project manifest and build configuration before rendering."
+        )
+
+    version = str(project.get("version") or ("3.11" if lang == "python" else "20"))
+    version_match = re.search(r"\d+(?:\.\d+)?", version)
+    if not version_match:
+        raise SystemExit(f"Could not resolve a concrete runtime version from: {version}")
+    resolved_version = version_match.group(0)
     test = project.get("test") or "NO_TESTS_DETECTED"
     working_dir = project.get("dir", ".") or "."
-    lockfile = project.get("lockfile") or ("requirements.txt" if lang == "python" else "package-lock.json" if lang == "node" else "lockfile")
-    artifact_path = "dist" if lang == "node" else "build" if lang == "python" else "target"
+    lockfile = project.get("lockfile") or ("pyproject.toml" if lang == "python" else "package.json")
     return {
-        "PYTHON_VERSION": "3.11" if lang == "python" else "3.11",
-        "NODE_VERSION": "20" if lang == "node" else "20",
+        "PYTHON_VERSION": resolved_version if lang == "python" else "3.11",
+        "NODE_VERSION": resolved_version if lang == "node" else "20",
         "INSTALL_CMD": install,
         "BUILD_CMD": build,
         "TEST_CMD": test,
-        "ARTIFACT_PATH": artifact_path,
-        "DEPLOY_TARGET": "azure-webapp",
+        "ARTIFACT_PATH": "dist",
         "WORKING_DIR": working_dir,
         "LANGUAGE": lang,
-        "VERSION": version,
+        "VERSION": resolved_version,
         "PACKAGE_MANAGER": project.get("pm", "unknown"),
         "LOCKFILE": lockfile,
         "CACHE_PATH": "~/.cache/pip" if lang == "python" else "~/.npm",
-        "FETCH_DATE": "2026-11-16",
-        "UPSTREAM_REF": "main",
+        "FETCH_DATE": datetime.date.today().isoformat(),
+        "UPSTREAM_REF": "reviewed-template",
         "GITLEAKS_VERSION": "v8.16.1",
         "TRIVY_VERSION": "0.56.2",
-        "SERVICE_CONNECTION": "azure-service-connection",
+        "SERVICE_CONNECTION": "$(AZURE_SERVICE_CONNECTION)",
         "APP_TYPE": "webAppLinux",
         "TEST_REPORT_GLOB": "**/test-results.xml",
         "TEST_REPORT_PATH": "test-results.xml",
@@ -66,60 +91,66 @@ def detect_values(repo: Path, project_dir: str | None = None):
     }
 
 
-def render_template(text: str, values: dict) -> str:
+def render_template(template: str, values: dict) -> str:
+    rendered = template
     for key, value in values.items():
-        text = text.replace(f"@@{key}@@", str(value))
-    unresolved = re.findall(r"@@[A-Z_]+@@", text)
+        rendered = rendered.replace(f"@@{key}@@", str(value))
+    unresolved = re.findall(r"@@[A-Z_]+@@", rendered)
     if unresolved:
-        raise SystemExit(f"Unresolved markers remain: {sorted(set(unresolved))}")
-    return text
+        raise SystemExit(f"Unresolved template markers remain: {sorted(set(unresolved))}")
+    return rendered
 
 
-def write_notes(out_dir: Path, platform: str, values: dict):
+def write_notes(out_dir: Path, platform: str, values: dict) -> None:
     lines = [
         f"Detected: {values['LANGUAGE']} {values['VERSION']} ({values['PACKAGE_MANAGER']})",
         f"Platform: {platform}",
-        "Secrets: CI vars / secret store only",
-        "Assumptions: repo-derived defaults only",
-        "TODO(verify): none",
-        "Validation: generated; run validate_pipeline.py",
+        "Secrets/Variables: configure platform-native secret storage; never commit values",
+        "Assumptions: artifact output is ./dist; review build output before enabling deployment",
+        "TODO(verify): review action/task versions and provider-specific deployment configuration",
+        "Validation: generated only; run validate_pipeline.py and the platform-native validator",
     ]
+    if platform == "github":
+        lines.append("Required variables: ALLOW_NO_TESTS; DEPLOY_ENABLED remains disabled until a target-specific deploy job is configured")
+    else:
+        lines.append(
+            "Required variables/service connection: ALLOW_NO_TESTS, DEPLOY_ENABLED, DEPLOY_TARGET, "
+            "DEPLOY_RESOURCE_GROUP, STAGING_URL, PRODUCTION_URL, AZURE_SERVICE_CONNECTION"
+        )
     (out_dir / "PIPELINE_NOTES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Render a repo-specific pipeline.")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Render a repository-specific CI/CD starter.")
     parser.add_argument("repo")
     parser.add_argument("platform")
     parser.add_argument("--out", default=".")
-    parser.add_argument("--project-dir", help="Exact project directory for a monorepo, as reported by detect_stack.py")
-    parser.add_argument("--overwrite", action="store_true", help="Allow replacing generated pipeline and notes after review")
+    parser.add_argument("--project-dir", help="Exact project directory for a monorepo")
+    parser.add_argument("--overwrite", action="store_true", help="Allow replacing generated output after review")
     args = parser.parse_args()
 
     platform = args.platform.lower()
     if platform not in SUPPORTED:
-        raise SystemExit(f"Unsupported platform: {platform}")
-
+        raise SystemExit(f"Unsupported renderer platform: {platform}. Supported: {', '.join(sorted(SUPPORTED))}")
     repo = Path(args.repo).resolve()
-    if not repo.exists():
-        raise SystemExit(f"Repo does not exist: {repo}")
-
-    out_dir = Path(args.out).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not repo.is_dir():
+        raise SystemExit(f"Repository directory does not exist: {repo}")
 
     template_path = SUPPORTED[platform]
-    if not template_path.exists():
+    if not template_path.is_file():
         raise SystemExit(f"Template not found: {template_path}")
-
-    text = template_path.read_text(encoding="utf-8")
     values = detect_values(repo, args.project_dir)
-    rendered = render_template(text, values)
+    rendered = render_template(template_path.read_text(encoding="utf-8"), values)
+
+    out_dir = Path(args.out).resolve()
     out_name = "azure-pipeline.yml" if platform == "azure" else "pipeline.yml"
     out_file = out_dir / out_name
     notes_file = out_dir / "PIPELINE_NOTES.md"
     existing = [item.name for item in (out_file, notes_file) if item.exists()]
     if existing and not args.overwrite:
         raise SystemExit(f"Existing output preserved: {existing}. Pass --overwrite only after review.")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
     out_file.write_text(rendered, encoding="utf-8")
     write_notes(out_dir, platform, values)
     print(str(out_file))
