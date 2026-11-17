@@ -169,3 +169,44 @@ def test_infra_plan_requires_provider(tmp_path):
     ])
     with pytest.raises(orchestrator.OrchestratorError, match="--provider is required"):
         orchestrator.create_plan(args)
+
+
+
+def test_execute_rejects_tampered_handoff(tmp_path):
+    project = make_node_project(tmp_path / "app")
+    run_dir = tmp_path / "run"
+    plan_for(project, run_dir)
+    handoff_path = run_dir / "handoffs" / "app-containerizer" / "handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["goal"] = "silently change the approved task"
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+    with pytest.raises(orchestrator.OrchestratorError, match="handoff changed"):
+        orchestrator.execute_run(args)
+
+
+def test_execute_rejects_tampered_project_context(tmp_path):
+    project = make_node_project(tmp_path / "app")
+    run_dir = tmp_path / "run"
+    plan_for(project, run_dir)
+    context_path = run_dir / "project-context.json"
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["languages"] = ["made-up-language"]
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+    with pytest.raises(orchestrator.OrchestratorError, match="context changed"):
+        orchestrator.execute_run(args)
+
+
+def test_mixed_language_manifests_in_one_directory_are_rejected(tmp_path):
+    project = make_node_project(tmp_path / "mixed")
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = \"mixed\"\nversion = \"0.1.0\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(orchestrator.OrchestratorError, match="Multiple language manifest groups"):
+        orchestrator.scan_project(project)
