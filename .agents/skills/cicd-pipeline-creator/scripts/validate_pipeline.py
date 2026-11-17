@@ -134,8 +134,34 @@ def validate(path: str):
             warnings.append("YAML parse skipped: PyYAML unavailable")
 
     if platform == "github" and isinstance(parsed_pipeline, dict):
+        permissions = parsed_pipeline.get("permissions")
+        if (
+            not isinstance(permissions, dict)
+            or permissions.get("contents") != "read"
+            or any(str(value).lower() == "write" for value in permissions.values())
+        ):
+            errors.append("GitHub workflow permissions must be explicitly least-privilege and read-only.")
+
         jobs = parsed_pipeline.get("jobs", {})
         if isinstance(jobs, dict):
+            for job_name, job_config in jobs.items():
+                if not isinstance(job_config, dict):
+                    errors.append(f"GitHub job '{job_name}' must be a mapping.")
+                    continue
+                timeout = job_config.get("timeout-minutes")
+                if not isinstance(timeout, int) or not 1 <= timeout <= 60:
+                    errors.append(f"GitHub job '{job_name}' must set timeout-minutes between 1 and 60.")
+            test_config = jobs.get("test", {})
+            test_text = json.dumps(test_config, sort_keys=True).lower()
+            if (
+                "allow_no_tests" not in test_text
+                or "no tests detected" not in test_text
+                or "add tests" not in test_text
+                or "exit 1" not in test_text
+            ):
+                errors.append("GitHub test job must fail when tests are missing unless ALLOW_NO_TESTS is explicitly enabled.")
+
+            for job_name, job_config in jobs.items():
             for job_name, job_config in jobs.items():
                 if "deploy" not in str(job_name).lower() or not isinstance(job_config, dict):
                     continue
