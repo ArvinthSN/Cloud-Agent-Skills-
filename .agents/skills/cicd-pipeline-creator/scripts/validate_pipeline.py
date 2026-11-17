@@ -21,8 +21,16 @@ def read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8", errors="ignore")
 
 
-def platform_name(path: str) -> str:
-    if "azure" in path.lower():
+def platform_name(path: str, text: str = "") -> str:
+    normalized = path.replace("\\", "/").lower()
+    name = Path(normalized).name
+    if name == "jenkinsfile":
+        return "jenkins"
+    if ".gitlab-ci" in normalized:
+        return "gitlab"
+    if ".circleci/" in normalized or ("version: 2.1" in text.lower() and "workflows:" in text.lower()):
+        return "circleci"
+    if "azure" in normalized:
         return "azure"
     return "github"
 
@@ -34,6 +42,8 @@ def load_allowlist(platform: str):
             "azure", "microsoft", "octo-org", "codecov", "sonarsource", "docker.io"
         },
         "azure": {"azure", "microsoft", "docker", "ghcr.io", "gitleaks", "aquasecurity"},
+        "gitlab": {"ghcr.io", "aquasec", "zricethezav", "python", "node", "alpine", "docker"},
+        "circleci": {"cimg", "ghcr.io", "aquasec", "zricethezav", "python", "node", "docker"},
     }
     ref = PLATFORM_DIR / f"{platform}.md"
     if not ref.exists():
@@ -42,24 +52,35 @@ def load_allowlist(platform: str):
     return set(re.findall(r"^\s*[-*]\s*([A-Za-z0-9_.@:/-]+)", text, re.M)) | default_allowlist.get(platform, set())
 
 
-def run_native_validators(path: Path):
+def run_native_validators(path: Path, platform: str):
     ran = []
     skipped = []
-    is_azure = "azure" in path.name.lower()
     checks = []
-    if is_azure:
-        skipped.append("SKIPPED: actionlint is GitHub Actions-specific")
-    elif shutil.which("actionlint"):
+    if platform == "github" and shutil.which("actionlint"):
         checks.append(("actionlint", ["actionlint", str(path)]))
-    else:
+    elif platform == "github":
         skipped.append("SKIPPED: actionlint not installed")
-    if shutil.which("yamllint"):
-        # Keep structural/style linting, but avoid imposing an 80-column policy on generated CI expressions.
+    elif platform == "circleci" and shutil.which("circleci"):
+        checks.append(("circleci config validate", ["circleci", "config", "validate", str(path)]))
+    elif platform == "circleci":
+        skipped.append("SKIPPED: CircleCI CLI not installed")
+    elif platform == "jenkins" and shutil.which("groovyc"):
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix="jenkinsfile-validate-")
+        checks.append(("Groovy syntax compile", ["groovyc", "-d", temp_dir, str(path)]))
+    elif platform == "jenkins":
+        skipped.append("SKIPPED: groovyc not installed; structural checks ran")
+    elif platform == "gitlab":
+        skipped.append("SKIPPED: GitLab CI Lint requires the target GitLab instance; static YAML checks ran")
+    else:
+        skipped.append("SKIPPED: platform-specific native validator unavailable")
+
+    if platform != "jenkins" and shutil.which("yamllint"):
         checks.append((
             "yamllint",
             ["yamllint", "-d", "{extends: relaxed, rules: {document-start: disable}}", str(path)],
         ))
-    else:
+    elif platform != "jenkins":
         skipped.append("SKIPPED: yamllint not installed")
 
     for name, command in checks:
@@ -78,14 +99,38 @@ def validate(path: str):
     errors = []
     warnings = []
     lower = text.lower()
+    platform = platform_name(path, text)
 
-    if yaml is not None:
-        try:
-            yaml.safe_load(text)
-        except Exception:
-            errors.append("YAML parse error")
+    if platform == "jenkins":
+        required_jenkins = [
+            "pipeline {",
+            "stages {",
+            "stage('build')",
+            "stage('scan and test')",
+            "stage('deploy gate')",
+            "stage('deploy staging')",
+            "stage('approve production')",
+            "stage('deploy production')",
+        ]
+        missing_jenkins = [item for item in required_jenkins if item not in lower]
+        if missing_jenkins:
+            errors.append("Jenkins declarative pipeline is missing required structure: " + ", ".join(missing_jenkins))
+        if "@@" in text:
+            errors.append("Unresolved template marker remains in Jenkinsfile")
+        if "timeout(" not in lower or "disableconcurrentbuilds" not in lower:
+            errors.append("Jenkinsfile must set a pipeline timeout and disable concurrent builds")
+        if "echo todo:" in lower or 'echo "todo' in lower:
+            errors.append("Jenkinsfile contains an unimplemented placeholder command")
     else:
-        warnings.append("YAML parse skipped: PyYAML unavailable")
+        if yaml is not None:
+            try:
+                parsed = yaml.safe_load(text)
+                if not isinstance(parsed, dict):
+                    errors.append("Pipeline YAML root must be a mapping")
+            except Exception:
+                errors.append("YAML parse error")
+        else:
+            warnings.append("YAML parse skipped: PyYAML unavailable")
 
     required = ["build", "scan", "test", "deploy"]
     missing = [item for item in required if item not in lower]
@@ -93,9 +138,20 @@ def validate(path: str):
         errors.append(f"Stages missing: {', '.join(missing)}")
 
     if re.search(r"\|\|\s*true|\|\|\s*exit\s+0|continue-on-error\s*:\s*true|allow_failure\s*:\s*true", lower):
-        errors.append("Forbidden failure suppression pattern found")
+        if not (platform == "gitlab" and "allow_failure:\n    exit_codes: 64" in text):
+            errors.append("Forbidden failure suppression pattern found")
 
-    if any(token in lower for token in ("gitleaks", "trivy", "secret scan")):
+    action_refs = re.findall(r"^\s*uses\s*:\s*['\"]?([^\s'\"]+)['\"]?\s*$", text, re.M | re.I)
+    for action_ref in action_refs:
+        if action_ref.startswith(("./", "docker://")):
+            continue
+        _, separator, revision = action_ref.rpartition("@")
+        if not separator or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            errors.append(
+                f"GitHub Action must be pinned to a full 40-character commit SHA: {action_ref}"
+            )
+
+    if platform == "github" and any(token in lower for token in ("gitleaks", "trivy", "secret scan")):
         if not ("fetchdepth: 0" in lower or "fetch-depth: 0" in lower or 'fetchdepth: "0"' in lower or "fetchDepth: 0" in lower):
             errors.append("Secret scan missing full-history checkout")
 
@@ -106,22 +162,10 @@ def validate(path: str):
         errors.append("Missing timeout on jobs")
 
     if "cache" not in lower and "actions/cache" not in lower and "cache@2" not in lower:
-        errors.append("Missing cache configuration")
+        errors.append("Missing dependency cache configuration")
 
-    if "deploy" in lower and "production" in lower and not re.search(r"environment\s*:\s*production|environment\s*:\s*['\"]production['\"]", text, re.I):
+    if platform not in {"jenkins", "circleci"} and "deploy" in lower and "production" in lower and not re.search(r"environment\s*:\s*production|environment\s*:\s*['\"]production['\"]", text, re.I):
         errors.append("Production deploy missing environment approval gate")
-
-    # GitHub Actions references are executable dependencies. Require a full immutable
-    # commit SHA; mutable tags and branches are not acceptable in generated workflows.
-    action_refs = re.findall(r"^\s*uses\s*:\s*['"]?([^\s'"]+)['"]?\s*$", text, re.M | re.I)
-    for action_ref in action_refs:
-        if action_ref.startswith(("./", "docker://")):
-            continue
-        _, separator, revision = action_ref.rpartition("@")
-        if not separator or not re.fullmatch(r"[0-9a-f]{40}", revision):
-            errors.append(
-                f"GitHub Action must be pinned to a full 40-character commit SHA: {action_ref}"
-            )
 
     refs = re.findall(r"(?:uses|task|orb|image)\s*:\s*['\"]?([^\s'\"]+)", text, re.I)
     for ref in refs:
@@ -129,31 +173,35 @@ def validate(path: str):
             continue
         if ref in {"self", "checkout"}:
             continue
-        if "/" in ref and ref.split("/", 1)[0] not in {"actions", "azure", "microsoft", "docker", "gitleaks", "aquase", "trivy", "github"}:
-            allow = load_allowlist(platform_name(path))
+        if "/" in ref and ref.split("/", 1)[0] not in {"actions", "azure", "microsoft", "docker", "gitleaks", "aquase", "aquasecurity", "github"}:
+            allow = load_allowlist(platform)
             if ref.split("/", 1)[0] not in allow:
                 errors.append(f"Unapproved third-party owner: {ref}")
         if re.search(r"@main\b|@master\b|@latest\b", ref, re.I):
             errors.append(f"Unpinned ref used: {ref}")
-        if "/" in ref and "@" not in ref:
+        if "/" in ref and "@" not in ref and platform in {"github", "azure"}:
             errors.append(f"Unpinned ref missing version: {ref}")
 
-    if "echo \"deploy" in lower or "echo 'deploy" in lower or "echo \"todo: deploy" in lower:
+    if re.search(r"""echo\s+['"](?:deploying\b|todo:\s*deploy\b)""", lower):
         errors.append("Deploy job echoes instead of performing a real deploy")
 
-    for marker in ("@@PYTHON_VERSION@@", "@@NODE_VERSION@@", "@@INSTALL_CMD@@", "@@BUILD_CMD@@", "@@TEST_CMD@@", "@@ARTIFACT_PATH@@", "@@WORKING_DIR@@", "@@DEPLOY_TARGET@@"):
-        if marker in text:
-            errors.append(f"Unresolved marker: {marker}")
+    if re.search(r"@@[A-Z_]+@@", text):
+        errors.append("Unresolved template markers remain in generated pipeline")
 
     publishes_artifact = (
         "upload-artifact" in lower
         or "publishpipelineartifact@1" in lower
         or re.search(r"^\s*publish\s*:", text, re.M | re.I) is not None
+        or "persist_to_workspace" in lower
+        or "store_artifacts" in lower
+        or "archiveartifacts" in lower
     )
     consumes_artifact = (
         "download-artifact" in lower
         or "downloadpipelineartifact@2" in lower
         or re.search(r"^\s*download\s*:\s*current\b", text, re.M | re.I) is not None
+        or "attach_workspace" in lower
+        or "unstash" in lower
     )
     if publishes_artifact and not consumes_artifact:
         warnings.append("Artifact is published but not consumed by a later stage")
@@ -173,7 +221,8 @@ def main():
         return 1
 
     errors, warnings = validate(str(path))
-    ran, skipped = run_native_validators(path)
+    platform = platform_name(str(path), text)
+    ran, skipped = run_native_validators(path, platform)
     errors.extend(
         f"Native validator failed: {item}"
         for item in ran
