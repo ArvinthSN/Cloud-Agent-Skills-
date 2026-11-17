@@ -89,14 +89,8 @@ test:
         echo "ERROR: no tests detected. Add tests or set ALLOW_NO_TESTS=true"; exit 1
       fi
       @@TEST_CMD@@
-  artifacts:
-    when: always
-    expire_in: 1 week
-    reports:
-      junit: '@@TEST_REPORT_GLOB@@'
-      coverage_report:
-        coverage_format: cobertura
-        path: '@@COVERAGE_REPORT@@'
+  # Add a stack-specific JUnit/coverage reporter only when the test command
+  # is configured to produce that format. Generic tests are not assumed to emit XML.
 
 deploy_skipped_notice:                      # a skipped deploy shows orange, never plain green
   stage: deploy
