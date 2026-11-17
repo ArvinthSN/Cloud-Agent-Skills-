@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED = {
     "azure": ROOT / "templates" / "azure" / "azure-pipelines.yml",
     "github": ROOT / "templates" / "github" / "pipeline.yml",
+    "gitlab": ROOT / "templates" / "gitlab" / ".gitlab-ci.yml",
+    "jenkins": ROOT / "templates" / "jenkins" / "Jenkinsfile",
+    "circleci": ROOT / "templates" / "circleci" / "config.yml",
+}
+OUTPUT_NAMES = {
+    "azure": "azure-pipeline.yml",
+    "github": "pipeline.yml",
+    "gitlab": ".gitlab-ci.yml",
+    "jenkins": "Jenkinsfile",
+    "circleci": ".circleci/config.yml",
 }
 SUPPORTED_LANGUAGES = {"python", "node"}
 
@@ -82,6 +92,12 @@ def detect_values(repo: Path, project_dir: str | None = None, context_path: str 
     resolved_version = version_match.group(0)
     test = project.get("test") or "NO_TESTS_DETECTED"
     working_dir = project.get("dir", ".") or "."
+    working_path = Path(working_dir)
+    if working_path.is_absolute() or ".." in working_path.parts or any(ch in working_dir for ch in "\\r\\n\\0"):
+        raise SystemExit(f"Unsafe project working directory: {working_dir!r}")
+    for label, command in (("install", install), ("build", build), ("test", test)):
+        if not isinstance(command, str) or len(command) > 512 or any(ch in command for ch in "\\r\\n\\0"):
+            raise SystemExit(f"Unsafe or oversized {label} command; use a single-line command of at most 512 characters.")
     lockfile = lockfile or ("pyproject.toml" if lang == "python" else "package-lock.json")
     cache_paths = {
         "pip": "~/.cache/pip",
@@ -96,7 +112,11 @@ def detect_values(repo: Path, project_dir: str | None = None, context_path: str 
         "BUILD_CMD": build,
         "TEST_CMD": test,
         "ARTIFACT_PATH": "dist",
-        "WORKING_DIR": working_dir,
+        "WORKING_DIR": working_path.as_posix(),
+        "RUNNER_IMAGE": f"python:{resolved_version}-slim" if lang == "python" else f"node:{resolved_version}-bookworm",
+        "BUILD_IMAGE": f"python:{resolved_version}-slim" if lang == "python" else f"node:{resolved_version}-bookworm",
+        "DEPLOY_IMAGE": "alpine:3.21",
+        "AGENT_LABEL": "linux-docker",
         "LANGUAGE": lang,
         "VERSION": resolved_version,
         "PACKAGE_MANAGER": package_manager,
@@ -104,8 +124,17 @@ def detect_values(repo: Path, project_dir: str | None = None, context_path: str 
         "CACHE_PATH": cache_paths[package_manager],
         "FETCH_DATE": datetime.date.today().isoformat(),
         "UPSTREAM_REF": "reviewed-template",
-        "GITLEAKS_VERSION": "v8.16.1",
-        "TRIVY_VERSION": "0.56.2",
+        "GITLEAKS_VERSION": "v8.30.0",
+        "TRIVY_VERSION": "0.70.0",
+        "OIDC_AUDIENCE": "cloud-agent-skills/unconfigured",
+        "DEPLOY_CREDENTIALS_ID": "UNCONFIGURED_DEPLOY_CREDENTIALS",
+        "APPROVERS": "jenkins-admins",
+        "STAGING_URL": "https://invalid.invalid",
+        "PRODUCTION_URL": "https://invalid.invalid",
+        "STAGING_HEALTH_URL": "https://invalid.invalid",
+        "PRODUCTION_HEALTH_URL": "https://invalid.invalid",
+        "DEPLOY_CMD_STAGING": 'echo "Target-specific staging deployment is not configured."; exit 1',
+        "DEPLOY_CMD_PRODUCTION": 'echo "Target-specific production deployment is not configured."; exit 1',
         "SERVICE_CONNECTION": "$(AZURE_SERVICE_CONNECTION)",
         "APP_TYPE": "webAppLinux",
         "TEST_REPORT_GLOB": "**/test-results.xml",
@@ -134,12 +163,19 @@ def write_notes(out_dir: Path, platform: str, values: dict) -> None:
         "Validation: generated only; run validate_pipeline.py and the platform-native validator",
     ]
     if platform == "github":
-        lines.append("Required variables: ALLOW_NO_TESTS; DEPLOY_ENABLED remains disabled until a target-specific deploy job is configured")
+        lines.append("Required variable: ALLOW_NO_TESTS. DEPLOY_ENABLED must remain false until a target-specific deploy job is configured.")
+        lines.append("All GitHub Actions dependencies are pinned to full commit SHAs; review and refresh pins deliberately.")
+    elif platform == "azure":
+        lines.append("Required variables/service connection: ALLOW_NO_TESTS, DEPLOY_ENABLED, DEPLOY_TARGET, DEPLOY_RESOURCE_GROUP, STAGING_URL, PRODUCTION_URL, AZURE_SERVICE_CONNECTION.")
+    elif platform == "gitlab":
+        lines.append("Deployment is disabled by default. Configure protected environments, OIDC trust, and target-specific commands before enabling DEPLOY_ENABLED.")
+        lines.append("Review container image tags and pin approved images to registry digests for high-assurance environments.")
+    elif platform == "jenkins":
+        lines.append("Requires a Docker-capable agent labeled linux-docker, Pipeline and Workspace Cleanup plugins, and configured approval/credential IDs.")
+        lines.append("Deployment commands intentionally fail closed until target-specific staging and production commands are configured.")
     else:
-        lines.append(
-            "Required variables/service connection: ALLOW_NO_TESTS, DEPLOY_ENABLED, DEPLOY_TARGET, "
-            "DEPLOY_RESOURCE_GROUP, STAGING_URL, PRODUCTION_URL, AZURE_SERVICE_CONNECTION"
-        )
+        lines.append("Configure CircleCI contexts, restricted environment variables, and a target-specific deploy job before enabling deployment.")
+        lines.append("Review scanner image tags and pin approved images to registry digests for high-assurance environments.")
     (out_dir / "PIPELINE_NOTES.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -167,14 +203,14 @@ def main() -> int:
     rendered = render_template(template_path.read_text(encoding="utf-8"), values)
 
     out_dir = Path(args.out).resolve()
-    out_name = "azure-pipeline.yml" if platform == "azure" else "pipeline.yml"
-    out_file = out_dir / out_name
+    out_file = out_dir / OUTPUT_NAMES[platform]
     notes_file = out_dir / "PIPELINE_NOTES.md"
     existing = [item.name for item in (out_file, notes_file) if item.exists()]
     if existing and not args.overwrite:
         raise SystemExit(f"Existing output preserved: {existing}. Pass --overwrite only after review.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(rendered, encoding="utf-8")
     write_notes(out_dir, platform, values)
     print(str(out_file))
