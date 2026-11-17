@@ -75,3 +75,41 @@ def test_project_without_real_build_is_rejected(tmp_path):
     assert result.returncode != 0
     assert "artifact-producing build" in result.stderr + result.stdout
     assert not (out / "pipeline.yml").exists()
+
+
+
+def test_python_package_project_is_installed_for_tests(tmp_path):
+    project = tmp_path / "python-app"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        "[build-system]\nrequires = [\"setuptools\"]\nbuild-backend = \"setuptools.build_meta\"\n"
+        "[project]\nname = \"python-app\"\nversion = \"0.1.0\"\n",
+        encoding="utf-8",
+    )
+    (project / "requirements.txt").write_text("pytest==8.3.3\n", encoding="utf-8")
+    tests = project / "tests"
+    tests.mkdir()
+    (tests / "test_app.py").write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    out = tmp_path / "out"
+    result = run(project, "github", "--out", out)
+    assert result.returncode == 0, result.stderr + result.stdout
+    pipeline = (out / "pipeline.yml").read_text(encoding="utf-8")
+    assert "python -m pip install ." in pipeline
+    assert "python -m build --outdir dist" in pipeline
+
+
+def test_pnpm_project_is_rejected_until_renderer_supports_it(tmp_path):
+    project = tmp_path / "pnpm-app"
+    project.mkdir()
+    (project / "package.json").write_text(
+        '{"name":"pnpm-app","scripts":{"build":"node build.js","start":"node server.js"}}',
+        encoding="utf-8",
+    )
+    (project / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    (project / "build.js").write_text('require("fs").mkdirSync("dist", {recursive:true});\n', encoding="utf-8")
+    (project / "server.js").write_text('console.log("ready");\n', encoding="utf-8")
+    out = tmp_path / "out"
+    result = run(project, "github", "--out", out)
+    assert result.returncode != 0
+    assert "requires npm and package-lock.json" in result.stderr + result.stdout
+    assert not (out / "pipeline.yml").exists()
