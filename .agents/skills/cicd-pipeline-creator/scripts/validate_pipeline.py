@@ -252,6 +252,10 @@ def validate(path: str):
         or re.search(r"^\s*download\s*:\s*current\b", text, re.M | re.I) is not None
         or "attach_workspace" in lower
         or "unstash" in lower
+        or (
+            platform == "gitlab"
+            and re.search(r"(?is)needs\\s*:[\\s\\S]{0,240}?artifacts\\s*:\\s*true", text) is not None
+        )
     )
     if publishes_artifact and not consumes_artifact:
         warnings.append("Artifact is published but not consumed by a later stage")
