@@ -491,9 +491,10 @@ def generate_project(
                   name_prefix = local.name_prefix
                   location    = var.location
                   environment = var.environment
-                  subnet_id   = module.networking.data_subnet_id
-                  db_engine   = "{plan.db_engine}"
-                  db_username = var.db_username
+                  subnet_id          = module.networking.data_subnet_id
+                  private_dns_zone_id = module.networking.postgres_private_dns_zone_id
+                  db_engine           = "{plan.db_engine}"
+                  db_username         = var.db_username
                   db_password = var.db_password
                 }}
                 """
