@@ -54,7 +54,11 @@ def run_native_validators(path: Path):
     else:
         skipped.append("SKIPPED: actionlint not installed")
     if shutil.which("yamllint"):
-        checks.append(("yamllint", ["yamllint", str(path)]))
+        # Keep structural/style linting, but avoid imposing an 80-column policy on generated CI expressions.
+        checks.append((
+            "yamllint",
+            ["yamllint", "-d", "{extends: relaxed, rules: {document-start: disable}}", str(path)],
+        ))
     else:
         skipped.append("SKIPPED: yamllint not installed")
 
