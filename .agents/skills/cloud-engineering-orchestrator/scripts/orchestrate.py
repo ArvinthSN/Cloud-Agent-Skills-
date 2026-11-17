@@ -434,6 +434,13 @@ def scan_project(root: Path) -> dict[str, Any]:
     }
 
 
+def resolve_output_path(value: str | None, base: Path, default: Path) -> Path:
+    if not value:
+        return default.resolve()
+    candidate = Path(value)
+    return (candidate if candidate.is_absolute() else base / candidate).resolve()
+
+
 def select_project(projects: list[dict[str, Any]], project_dir: str | None, required: bool) -> dict[str, Any] | None:
     if project_dir is not None:
         selected_path = Path(project_dir)
@@ -559,12 +566,11 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         raise OrchestratorError(f"Run directory is not empty: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    output_root = Path(args.output_root).resolve() if args.output_root else root
+    output_root = resolve_output_path(args.output_root, root, root)
     project_root = root / ("" if selected is None or selected["dir"] == "." else selected["dir"])
-    ci_out = Path(args.ci_output).resolve() if args.ci_output else (
-        project_root / ".github" / "workflows" if args.platform == "github" else project_root
-    )
-    infra_out = Path(args.infra_output).resolve() if args.infra_output else output_root / "infra"
+    default_ci_out = project_root / ".github" / "workflows" if args.platform == "github" else project_root
+    ci_out = resolve_output_path(args.ci_output, project_root, default_ci_out)
+    infra_out = resolve_output_path(args.infra_output, output_root, output_root / "infra")
     plan = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -861,6 +867,35 @@ def execute_skill(skill: str, handoff: dict[str, Any], run_dir: Path, overwrite:
     return {"status": status, "artifacts": artifacts, "checks": checks, "assumptions": assumptions, "risks": risks, "manual_actions": manual}
 
 
+def preflight_outputs(plan: dict[str, Any], run_dir: Path, overwrite: bool) -> list[str]:
+    conflicts: list[str] = []
+    for skill in plan["selected_skills"]:
+        handoff = read_json(run_dir / "handoffs" / skill / "handoff.json")
+        if skill == "app-containerizer":
+            project_root = Path(handoff["project_root"])
+            targets = [project_root / "Dockerfile", project_root / ".dockerignore"]
+            if handoff.get("compose_services"):
+                targets.append(project_root / "compose.yaml")
+            conflicts.extend(str(path) for path in targets if path.exists())
+        elif skill == "cicd-pipeline-creator":
+            output_dir = Path(handoff["output_dir"])
+            pipeline = "pipeline.yml" if handoff["platform"] == "github" else "azure-pipeline.yml"
+            targets = [output_dir / pipeline, output_dir / "PIPELINE_NOTES.md"]
+            conflicts.extend(str(path) for path in targets if path.exists())
+        else:
+            output_dir = Path(handoff["output_dir"])
+            if output_dir.exists() and any(output_dir.iterdir()):
+                conflicts.append(f"{output_dir} (non-empty Terraform output directory)")
+    if conflicts and not overwrite:
+        joined = "\\n- ".join(conflicts)
+        raise OrchestratorError(
+            "Existing output was found. No specialist was executed and no files were changed. "
+            "Review these paths, then re-run with --overwrite only when replacement is intended:\\n- "
+            + joined
+        )
+    return conflicts
+
+
 def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.run_dir).resolve()
     plan_path = run_dir / "execution-plan.json"
@@ -872,12 +907,12 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     if not args.approve:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
     _verify_run_fresh(plan, context, run_dir)
+    existing_outputs = preflight_outputs(plan, run_dir, args.overwrite)
 
     started_at = utc_now()
     skill_results: dict[str, Any] = {}
     all_artifacts: list[dict[str, str]] = []
-    all_checks: list[dict[str, str]] = []
-    assumptions = list(plan.get("assumptions", []))
+    all_checks: list[dict[str, str]] = [\n        _check("output-preflight", "WARNING" if existing_outputs else "PASS", "Existing files will be replaced under explicit --overwrite approval." if existing_outputs else "No existing output conflicts detected.")\n    ]\n    assumptions = list(plan.get("assumptions", []))
     risks: list[str] = []
     manual: list[str] = []
     for skill in plan["selected_skills"]:
@@ -908,6 +943,7 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
         "skill": "cloud-engineering-orchestrator",
         "run_id": plan["run_id"],
         "project_revision": plan["project"].get("revision"),
+        "overwrite_approved": bool(args.overwrite),
         "detected": {
             "languages": context["languages"],
             "frameworks": context["frameworks"],
