@@ -154,7 +154,7 @@ def validate(path: str):
             test_config = jobs.get("test", {})
             test_text = json.dumps(test_config, sort_keys=True).lower()
             if (
-                "allow_no_tests" not in test_text
+                'if [ "$allow_no_tests" = "true" ]; then exit 0; fi' not in test_text
                 or "no tests detected" not in test_text
                 or "add tests" not in test_text
                 or "exit 1" not in test_text
