@@ -50,6 +50,12 @@ def detect_values(repo: Path, project_dir: str | None = None) -> dict:
             f"Unsupported pipeline stack: {lang}. Renderer currently supports Python and Node.js only."
         )
 
+    package_manager = project.get("pm", "unknown")
+    lockfile = project.get("lockfile")
+    if lang == "node" and (package_manager != "npm" or lockfile != "package-lock.json"):
+        raise SystemExit("The Node.js pipeline renderer currently requires npm and package-lock.json. pnpm/yarn and unlocked projects are not supported yet.")
+    if lang == "python" and package_manager not in {"pip", "poetry", "uv"}:
+        raise SystemExit(f"Unsupported Python package manager: {package_manager}")
     install = project.get("install")
     build = project.get("build")
     if not install or not build or str(install).lstrip().startswith("echo ") or str(build).lstrip().startswith("echo "):
@@ -65,7 +71,13 @@ def detect_values(repo: Path, project_dir: str | None = None) -> dict:
     resolved_version = version_match.group(0)
     test = project.get("test") or "NO_TESTS_DETECTED"
     working_dir = project.get("dir", ".") or "."
-    lockfile = project.get("lockfile") or ("pyproject.toml" if lang == "python" else "package.json")
+    lockfile = lockfile or ("pyproject.toml" if lang == "python" else "package-lock.json")
+    cache_paths = {
+        "pip": "~/.cache/pip",
+        "poetry": "~/.cache/pypoetry",
+        "uv": "~/.cache/uv",
+        "npm": "~/.npm",
+    }
     return {
         "PYTHON_VERSION": resolved_version if lang == "python" else "3.11",
         "NODE_VERSION": resolved_version if lang == "node" else "20",
@@ -76,9 +88,9 @@ def detect_values(repo: Path, project_dir: str | None = None) -> dict:
         "WORKING_DIR": working_dir,
         "LANGUAGE": lang,
         "VERSION": resolved_version,
-        "PACKAGE_MANAGER": project.get("pm", "unknown"),
+        "PACKAGE_MANAGER": package_manager,
         "LOCKFILE": lockfile,
-        "CACHE_PATH": "~/.cache/pip" if lang == "python" else "~/.npm",
+        "CACHE_PATH": cache_paths[package_manager],
         "FETCH_DATE": datetime.date.today().isoformat(),
         "UPSTREAM_REF": "reviewed-template",
         "GITLEAKS_VERSION": "v8.16.1",
