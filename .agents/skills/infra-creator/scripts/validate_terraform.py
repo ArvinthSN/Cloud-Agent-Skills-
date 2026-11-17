@@ -198,7 +198,8 @@ def validate(project_dir: Path) -> ValidationResult:
     return result
 
 
-scription="Validate a generated Terraform project")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Validate a generated Terraform project")
     parser.add_argument("path")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("-o", "--output")
