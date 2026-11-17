@@ -1,6 +1,6 @@
 resource "aws_ecr_repository" "this" {
   name                 = "${var.name_prefix}-app"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = var.environment != "prod"
   image_scanning_configuration { scan_on_push = true }
   encryption_configuration { encryption_type = "AES256" }
@@ -83,6 +83,23 @@ resource "aws_lb_listener" "http" {
   port              = 80
   protocol          = "HTTP"
   default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.this.arn
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = var.certificate_arn
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.this.arn
   }
@@ -132,7 +149,7 @@ resource "aws_ecs_task_definition" "this" {
   task_role_arn            = aws_iam_role.ecs_task.arn
   container_definitions = jsonencode([{
     name         = "app"
-    image        = "${aws_ecr_repository.this.repository_url}:latest"
+    image        = var.container_image
     essential    = true
     portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
     logConfiguration = {
@@ -162,7 +179,7 @@ resource "aws_ecs_service" "this" {
     container_name   = "app"
     container_port   = var.container_port
   }
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.https]
   lifecycle { ignore_changes = [task_definition] }
 }
 
