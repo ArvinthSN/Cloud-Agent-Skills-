@@ -23,6 +23,8 @@ id_rsa
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfvars
+!*.tfvars.example
 crash.log
 override.tf
 override.tf.json
