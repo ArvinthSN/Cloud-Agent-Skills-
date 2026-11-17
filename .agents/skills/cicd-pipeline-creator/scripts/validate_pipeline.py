@@ -43,23 +43,29 @@ def load_allowlist(platform: str):
 
 
 def run_native_validators(path: Path):
-    cmds = []
-    if shutil.which("actionlint"):
-        cmds.append(("actionlint", ["actionlint", str(path)]))
-    if shutil.which("yamllint"):
-        cmds.append(("yamllint", ["yamllint", str(path)]))
-    if not cmds:
-        return [], ["SKIPPED: native validators not installed"]
     ran = []
     skipped = []
-    for name, cmd in cmds:
+    is_azure = "azure" in path.name.lower()
+    checks = []
+    if is_azure:
+        skipped.append("SKIPPED: actionlint is GitHub Actions-specific")
+    elif shutil.which("actionlint"):
+        checks.append(("actionlint", ["actionlint", str(path)]))
+    else:
+        skipped.append("SKIPPED: actionlint not installed")
+    if shutil.which("yamllint"):
+        checks.append(("yamllint", ["yamllint", str(path)]))
+    else:
+        skipped.append("SKIPPED: yamllint not installed")
+
+    for name, command in checks:
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(command, capture_output=True, text=True, timeout=30)
             status = "PASS" if proc.returncode == 0 else "FAIL"
             detail = proc.stderr.strip() or proc.stdout.strip() or ""
             ran.append(f"RAN: {name} {status}{f' ({detail})' if detail else ''}")
-        except OSError:
-            skipped.append(f"SKIPPED: {name}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            skipped.append(f"SKIPPED: {name} could not complete: {exc}")
     return ran, skipped
 
 
@@ -123,8 +129,18 @@ def validate(path: str):
         if marker in text:
             errors.append(f"Unresolved marker: {marker}")
 
-    if any(choice in lower for choice in ("upload-artifact", "publishpipelineartifact@1")) and not any(choice in lower for choice in ("download-artifact", "downloadpipelineartifact@2")):
-        warnings.append("Artifact is published but not consumed later")
+    publishes_artifact = (
+        "upload-artifact" in lower
+        or "publishpipelineartifact@1" in lower
+        or re.search(r"^\s*publish\s*:", text, re.M | re.I) is not None
+    )
+    consumes_artifact = (
+        "download-artifact" in lower
+        or "downloadpipelineartifact@2" in lower
+        or re.search(r"^\s*download\s*:\s*current\b", text, re.M | re.I) is not None
+    )
+    if publishes_artifact and not consumes_artifact:
+        warnings.append("Artifact is published but not consumed by a later stage")
 
     return errors, warnings
 
@@ -136,22 +152,32 @@ def main():
     args = parser.parse_args()
 
     path = Path(args.path)
-    if not path.exists():
-        print(f"missing: {path}", file=sys.stderr)
-        return 2
+    if not path.is_file():
+        print(f"missing pipeline file: {path}", file=sys.stderr)
+        return 1
 
     errors, warnings = validate(str(path))
     ran, skipped = run_native_validators(path)
+    errors.extend(
+        f"Native validator failed: {item}"
+        for item in ran
+        if " FAIL" in item
+    )
 
+    status = "fail" if errors else "warning" if warnings else "pass"
+    exit_code = 1 if errors else 2 if warnings else 0
     if args.json:
-        payload = {"errors": errors, "warnings": warnings, "ran": ran, "skipped": skipped, "status": "pass" if not errors else "fail"}
+        payload = {"errors": errors, "warnings": warnings, "ran": ran, "skipped": skipped, "status": status}
         print(json.dumps(payload, indent=2))
-        return 1 if errors else 0
+        return exit_code
 
     if errors:
+        print("FAIL")
         print("ERRORS:")
         for item in errors:
             print(f"- {item}")
+    elif warnings:
+        print("PASS WITH WARNINGS")
     else:
         print("PASS")
 
@@ -159,7 +185,6 @@ def main():
         print("WARNINGS:")
         for item in warnings:
             print(f"- {item}")
-
     if ran:
         print("RAN:")
         for item in ran:
@@ -168,8 +193,7 @@ def main():
         print("SKIPPED:")
         for item in skipped:
             print(f"- {item}")
-
-    return 1 if errors else 0
+    return exit_code
 
 
 if __name__ == "__main__":
