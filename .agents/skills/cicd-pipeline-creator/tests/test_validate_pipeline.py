@@ -108,3 +108,53 @@ def test_deploy_job_must_exclude_pull_requests_and_target_main(tmp_path):
     result = run(pipeline)
     assert result.returncode == 1
     assert "must exclude pull requests" in result.stdout
+
+
+def test_github_workflow_requires_read_only_permissions(tmp_path):
+    pipeline = tmp_path / "pipeline.yml"
+    unsafe = BASE.replace("contents: read", "contents: write")
+    pipeline.write_text(unsafe, encoding="utf-8")
+    result = run(pipeline)
+    assert result.returncode == 1
+    assert "least-privilege and read-only" in result.stdout
+
+
+def test_circleci_requires_step_no_output_timeout(tmp_path):
+    pipeline = tmp_path / ".circleci" / "config.yml"
+    pipeline.parent.mkdir(parents=True)
+    pipeline.write_text(
+        """version: 2.1
+jobs:
+  build:
+    docker:
+      - image: cimg/base:2024.02
+    steps:
+      - run:
+          command: echo build
+  scan:
+    docker:
+      - image: cimg/base:2024.02
+    steps:
+      - run:
+          command: echo scan
+  test:
+    docker:
+      - image: cimg/base:2024.02
+    steps:
+      - run:
+          command: echo test
+  deploy:
+    docker:
+      - image: cimg/base:2024.02
+    steps:
+      - run:
+          command: echo deploy
+workflows:
+  pipeline:
+    jobs: [build, scan, test, deploy]
+""",
+        encoding="utf-8",
+    )
+    result = run(pipeline)
+    assert result.returncode == 1
+    assert "no_output_timeout" in result.stdout
