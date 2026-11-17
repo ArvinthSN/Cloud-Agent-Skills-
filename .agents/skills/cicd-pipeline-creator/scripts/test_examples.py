@@ -51,39 +51,82 @@ def golden_checks():
 
 
 def mutation_checks():
-    repo = ROOT / "examples" / "python-service"
-    bad_cases = [
-        ("|| true in scan", "trivy fs . || true"),
-        ("typo'd action name", "uses: aquase/trivy-action@main"),
-        ("echo-only deploy", "echo \"deploying\""),
-        ("un pinned ref", "uses: actions/checkout@main"),
-        ("missing timeout", "timeout-minutes: 0"),
-        ("secret scan no full history", "gitleaks detect --source ."),
-        ("deploy on PRs", "if: github.event_name == 'pull_request'"),
-        ("test guard removed", "ALLOW_NO_TESTS=false"),
-        ("hardcoded token", "password: \"supersecret\""),
-    ]
-    for label, inject in bad_cases:
+    repo = ROOT / "examples" / "node-service"
+
+    def replace_once(text, old, new, label):
+        if old not in text:
+            raise AssertionError(f"Could not apply mutation '{label}': expected fragment not found")
+        return text.replace(old, new, 1)
+
+    for label in (
+        "|| true in scan",
+        "typo'd action name",
+        "echo-only deploy",
+        "un pinned ref",
+        "missing timeout",
+        "secret scan no full history",
+        "deploy on PRs",
+        "test guard removed",
+        "hardcoded token",
+    ):
         with tempfile.TemporaryDirectory() as td:
-            src = Path(td)
-            shutil.copytree(repo, src / "repo")
-            pipeline = src / "repo" / "azure-pipeline.yml"
-            if not pipeline.exists():
-                pipeline = src / "repo" / "pipeline.yml"
-            if not pipeline.exists():
-                pipeline.write_text("name: test\n")
+            out = Path(td) / "out"
+            rendered = run([sys.executable, str(RENDER), str(repo), "github", "--out", str(out)])
+            assert_ok(rendered.returncode, f"baseline render failed: {rendered.stderr or rendered.stdout}")
+            pipeline = out / "pipeline.yml"
+            if not pipeline.is_file():
+                raise AssertionError("baseline GitHub pipeline was not generated")
             data = pipeline.read_text(encoding="utf-8")
-            if label == "deploy on PRs":
-                data = data.replace(
+
+            if label == "|| true in scan":
+                data += "\n# injected policy violation: trivy fs . || true\n"
+            elif label == "typo'd action name":
+                data = replace_once(
+                    data,
+                    "uses: aquasecurity/trivy-action@",
+                    "uses: unapproved-owner/trivy-action@",
+                    label,
+                )
+            elif label == "echo-only deploy":
+                data = replace_once(
+                    data,
+                    'echo "::notice::Build, scan and test completed. Deployment is disabled; configure a target-specific job before enabling releases."',
+                    'echo "deploying"',
+                    label,
+                )
+            elif label == "un pinned ref":
+                data = replace_once(
+                    data,
+                    "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10",
+                    "actions/checkout@main",
+                    label,
+                )
+            elif label == "missing timeout":
+                data = replace_once(data, "timeout-minutes: 20", "timeout-minutes: 0", label)
+            elif label == "secret scan no full history":
+                data = replace_once(data, "fetch-depth: 0", "fetch-depth: 1", label)
+            elif label == "deploy on PRs":
+                data = replace_once(
+                    data,
                     "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'",
                     "github.event_name == 'pull_request'",
+                    label,
                 )
-            else:
-                data = data + "\n" + inject + "\n"
+            elif label == "test guard removed":
+                data = replace_once(
+                    data,
+                    'if [ "$ALLOW_NO_TESTS" = "true" ]; then exit 0; fi',
+                    "if true; then exit 0; fi",
+                    label,
+                )
+            elif label == "hardcoded token":
+                data += '\n# injected secret: password: "supersecret"\n'
+
             pipeline.write_text(data, encoding="utf-8")
-            res = run([sys.executable, str(VALIDATE), str(pipeline)])
+            res = run([sys.executable, str(VALIDATE), str(pipeline), "--json"])
             if res.returncode == 0:
-                raise AssertionError(f"mutation check failed: {label}")
+                raise AssertionError(f"mutation check unexpectedly passed: {label}\n{res.stdout}\n{res.stderr}")
+
 
 
 def detect_checks():
