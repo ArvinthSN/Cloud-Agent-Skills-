@@ -141,7 +141,7 @@ def validate(path: str):
         if not (platform == "gitlab" and "allow_failure:\n    exit_codes: 64" in text):
             errors.append("Forbidden failure suppression pattern found")
 
-    action_refs = re.findall(r"^\s*uses\s*:\s*['\"]?([^\s'\"]+)['\"]?\s*$", text, re.M | re.I)
+    action_refs = re.findall(r"^\s*(?:-\s*)?uses\s*:\s*['\"]?([^\s'\"]+)['\"]?(?:\s+#.*)?\s*$", text, re.M | re.I)
     for action_ref in action_refs:
         if action_ref.startswith(("./", "docker://")):
             continue
