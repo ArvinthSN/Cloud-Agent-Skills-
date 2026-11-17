@@ -78,10 +78,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def payload_hash(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp.write_text(canonical_json(value), encoding="utf-8")
     temp.replace(path)
 
 
@@ -559,6 +567,7 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             "architecture": None,
             "confidence": None,
             "snapshot_hash": context["snapshot_hash"],
+            "context_hash": payload_hash(context),
             "context_file": str(run_dir / "project-context.json"),
             "scanner_version": SCANNER_VERSION,
         },
@@ -588,6 +597,7 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
     write_json(run_dir / "execution-plan.json", plan)
 
     handoff_paths: dict[str, str] = {}
+    handoff_hashes: dict[str, str] = {}
     for skill in skills:
         handoff_dir = run_dir / "handoffs" / skill
         handoff_path = handoff_dir / "handoff.json"
@@ -619,19 +629,43 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             handoff["outputs"] = ["main.tf", "variables.tf", "providers.tf", "versions.tf", "outputs.tf", "modules/"]
         write_json(handoff_path, handoff)
         handoff_paths[skill] = str(handoff_path)
+        handoff_hashes[skill] = payload_hash(handoff)
 
     plan["handoffs"] = handoff_paths
+    plan["handoff_hashes"] = handoff_hashes
     write_json(run_dir / "execution-plan.json", plan)
     return plan
 
 
-def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any]) -> None:
-    root = Path(plan["project"]["root"])
+def _verify_run_fresh(plan: dict[str, Any], context: dict[str, Any], run_dir: Path) -> None:
+    if plan.get("schema_version") != SCHEMA_VERSION or context.get("schema_version") != SCHEMA_VERSION:
+        raise OrchestratorError("Unsupported plan or project-context schema version.")
+    if Path(plan["project"]["root"]).resolve() != Path(context.get("root", "")).resolve():
+        raise OrchestratorError("Project root mismatch between execution plan and context.")
+    if payload_hash(context) != plan["project"].get("context_hash"):
+        raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
+    root = Path(plan["project"]["root"]).resolve()
     current = scan_project(root)
     if current["snapshot_hash"] != plan["project"]["snapshot_hash"]:
         raise OrchestratorError("Project files changed after planning. Create a fresh plan before executing.")
     if current["scanner_version"] != plan["project"]["scanner_version"]:
         raise OrchestratorError("Scanner version changed after planning. Create a fresh plan before executing.")
+    if context.get("selected_project", {}).get("id") != plan.get("workflow", {}).get("project_id") and plan.get("workflow", {}).get("project_id") is not None:
+        raise OrchestratorError("Selected project does not match the execution plan.")
+    for skill in plan.get("selected_skills", []):
+        handoff_path = run_dir / "handoffs" / skill / "handoff.json"
+        handoff = read_json(handoff_path)
+        if payload_hash(handoff) != plan.get("handoff_hashes", {}).get(skill):
+            raise OrchestratorError(f"Skill handoff changed after planning: {skill}")
+        if handoff.get("schema_version") != SCHEMA_VERSION:
+            raise OrchestratorError(f"Unsupported handoff schema version for {skill}.")
+        if handoff.get("run_id") != plan.get("run_id") or handoff.get("skill") != skill:
+            raise OrchestratorError(f"Invalid or mismatched handoff for {skill}.")
+        if handoff.get("snapshot_hash") != plan["project"]["snapshot_hash"]:
+            raise OrchestratorError(f"Project snapshot mismatch in handoff for {skill}.")
+        project_root = Path(handoff.get("project_root", "")).resolve()
+        if project_root != root and root not in project_root.parents:
+            raise OrchestratorError(f"Skill handoff project path escapes the scanned repository: {skill}.")
 
 
 def run_command(command: list[str], cwd: Path, timeout: int = 600) -> subprocess.CompletedProcess[str]:
@@ -808,7 +842,7 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     context = read_json(context_path)
     if not args.approve:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
-    _verify_run_fresh(plan, context)
+    _verify_run_fresh(plan, context, run_dir)
 
     skill_results: dict[str, Any] = {}
     all_artifacts: list[dict[str, str]] = []
