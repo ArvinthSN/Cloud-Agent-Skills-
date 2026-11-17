@@ -1,61 +1,68 @@
-# infra-creator (Multi-Cloud)
+# Infra Creator
 
-Generate production-oriented Terraform IaC for AWS, Azure and GCP from application repositories.
+Create reviewable, container-focused Terraform plans and modules for AWS, Azure and GCP.
 
-## Providers
+## Current support
 
-| Provider | Compute | Database | Registry |
+| Provider | Compute template | Database template | Notes |
 |---|---|---|---|
-| AWS | ECS Fargate + ALB | RDS | ECR |
-| Azure | Container Apps | PostgreSQL Flexible Server | ACR |
-| GCP | Cloud Run | Cloud SQL | Artifact Registry |
+| AWS | ECS Fargate | RDS | Networking required; database security group comes from compute module |
+| Azure | Container Apps | PostgreSQL Flexible Server | Networking module required |
+| GCP | Cloud Run | Cloud SQL | Networking module required |
+
+Serverless and VM plans are detected but generation stops because matching compute modules are not implemented. Do not treat a plan as deployable infrastructure until Terraform validation and provider review succeed.
 
 ## Quick start
 
-Plan only; choose aws, azure or gcp:
+Run from the repository root, adjusting paths and provider as needed:
 
-    python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output /path/to/app/infra --project-name myapp --plan-only
+~~~bash
+python .agents/skills/infra-creator/scripts/scan_repository.py ./app --json -o /tmp/scan.json
+python .agents/skills/infra-creator/scripts/analyze_architecture.py /tmp/scan.json -o /tmp/arch.json
 
-Generate only after reviewing and approving the plan:
+# Inspect the plan; this does not write infrastructure.
+python .agents/skills/infra-creator/scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --project-name myapp --plan-only
 
-    python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output /path/to/app/infra --project-name myapp --approve
+# After approving the plan:
+python .agents/skills/infra-creator/scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --project-name myapp --approve
 
-Validate (requires Terraform CLI):
+# Validate locally; Terraform CLI is required.
+python .agents/skills/infra-creator/scripts/validate_terraform.py ./app/infra --json
+~~~
 
-    python scripts/validate_terraform.py /path/to/app/infra
+Use --overwrite only after reviewing and explicitly approving replacement of a non-empty output directory. Generation requires --approve.
 
-Add --overwrite only after reviewing an existing non-empty output directory.
+## Database credentials
+
+The generated db_password variable is required and marked sensitive. Supply it through a secret manager or a protected environment variable such as TF_VAR_db_password. Never write the password into committed tfvars, source code, pipeline YAML or logs.
 
 ## Layout
 
-    infra-creator/
-    ├── SKILL.md
-    ├── scripts/
-    ├── architecture-patterns/
-    ├── references/
-    ├── templates/
-    │   ├── aws/
-    │   ├── azure/
-    │   └── gcp/
-    ├── examples/
-    └── tests/
+~~~text
+infra-creator/
+├── SKILL.md
+├── scripts/
+├── architecture-patterns/
+├── references/
+├── templates/
+│   ├── aws/
+│   ├── azure/
+│   └── gcp/
+├── examples/
+└── tests/
+~~~
 
-## Principles
+## Safety and validation
 
-- Evidence-based architecture detection.
-- Generate only justified resources.
-- Require human approval before writing.
-- Never auto-apply or hardcode credentials.
-- Prefer private networking and encrypted databases.
+- No implicit terraform apply or terraform destroy.
+- No cloud credentials or secrets in generated files.
+- Existing output is preserved unless overwrite is explicitly approved.
+- Terraform validation runs against an isolated temporary copy and does not alter generated output.
+- If the Terraform CLI is missing, validation fails as NOT_RUN; it is never reported as PASS.
+- terraform validate does not prove cloud credentials, quotas, policies or deployment will succeed.
 
-## Testing
+## Tests
 
-    pytest tests/ -v
-
-## Limitations
-
-- Current compute modules are container-focused (ECS, Container Apps and Cloud Run).
-- Serverless is detected but generation is blocked until dedicated function modules exist.
-- Terraform CLI is required for validation, but not for planning.
-- Generation requires --approve; non-empty output directories require --overwrite.
-- The generator never runs terraform apply or pushes to GitHub.
+~~~bash
+pytest -q .agents/skills/infra-creator/tests
+~~~
