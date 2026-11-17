@@ -115,3 +115,20 @@ def test_database_password_is_required_and_sensitive(provider):
     block = variables[start:variables.index("}", start) + 1]
     assert "sensitive" in block
     assert "default" not in block
+
+
+
+def test_project_name_rejects_hcl_injection(tmp_path):
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, "aws")
+    with pytest.raises(ValueError, match="project_name"):
+        generate_project(tmp_path / "infra", plan, project_name='demo" } resource "x" "y" {')
+
+
+def test_database_engine_is_allowlisted(tmp_path):
+    from generate_terraform import InfraPlan
+
+    plan = InfraPlan(provider="gcp", architecture="monolithic", needs_database=True, db_engine='postgres" }')
+    with pytest.raises(ValueError, match="Unsupported database engine"):
+        generate_project(tmp_path / "infra", plan, project_name="demo")
