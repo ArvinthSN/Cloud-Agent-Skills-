@@ -205,7 +205,14 @@ def _versions_block(provider: str, project_name: str, region: str) -> str:
         """
 
 
-def _variables_block(provider: str, project_name: str, region: str) -> str:
+def _variables_block(
+    provider: str,
+    project_name: str,
+    region: str,
+    *,
+    needs_database: bool = True,
+    needs_compute: bool = True,
+) -> str:
     common = f"""
         variable "project_name" {{
           description = "Name of the project used for resource naming"
@@ -218,18 +225,35 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type        = string
           default     = "dev"
         }}
-
-        variable "container_image" {{
+        """
+    if needs_compute:
+        common += """
+        variable "container_image" {
           description = "Immutable OCI image reference using repository@sha256:<64 hex characters>"
           type        = string
-          validation {{
-            condition     = can(regex("@sha256:[0-9a-f]{{64}}$", var.container_image))
+          validation {
+            condition     = can(regex("@sha256:[0-9a-f]{64}$", var.container_image))
             error_message = "container_image must be an immutable OCI SHA-256 digest reference."
-          }}
-        }}
+          }
+        }
         """
+
+    database = """
+        variable "db_username" {
+          type      = string
+          default   = "appadmin"
+          sensitive = true
+        }
+
+        variable "db_password" {
+          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
+          type        = string
+          sensitive   = true
+        }
+        """ if needs_database else ""
+
     if provider == "aws":
-        return common + f"""
+        provider_vars = f"""
         variable "aws_region" {{
           description = "AWS region"
           type        = string
@@ -246,31 +270,23 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
-
-        variable "certificate_arn" {{
+        """
+        if needs_compute:
+            provider_vars += """
+        variable "certificate_arn" {
           description = "ACM certificate ARN for the HTTPS application load balancer listener"
           type        = string
-        }}
+        }
 
-        variable "desired_count" {{
+        variable "desired_count" {
           type    = number
           default = 2
-        }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
-          type        = string
-          sensitive   = true
-        }}
+        }
         """
+        return common + provider_vars + database
+
     if provider == "azure":
-        return common + f"""
+        provider_vars = f"""
         variable "location" {{
           description = "Azure region"
           type        = string
@@ -286,27 +302,10 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
-
-        variable "allow_unauthenticated" {{
-          description = "Explicitly allow unauthenticated Cloud Run invocation"
-          type        = bool
-          default     = false
-        }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
-          type        = string
-          sensitive   = true
-        }}
         """
-    # gcp
-    return common + f"""
+        return common + provider_vars + database
+
+    provider_vars = f"""
         variable "project_id" {{
           description = "GCP project ID"
           type        = string
@@ -327,19 +326,17 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
-          type        = string
-          sensitive   = true
-        }}
         """
+    if needs_compute:
+        provider_vars += """
+        variable "allow_unauthenticated" {
+          description = "Explicitly allow unauthenticated Cloud Run invocation"
+          type        = bool
+          default     = false
+        }
+        """
+    return common + provider_vars + database
+
 
 
 def generate_project(
@@ -400,7 +397,7 @@ def generate_project(
     _write(output_dir / "versions.tf", _versions_block(provider, project_name, region))
     region_var = "aws_region" if provider == "aws" else ("location" if provider == "azure" else "region")
     _write(output_dir / "providers.tf", _provider_block(provider, region_var))
-    _write(output_dir / "variables.tf", _variables_block(provider, project_name, region))
+    _write(output_dir / "variables.tf", _variables_block(provider, project_name, region, needs_database=plan.needs_database, needs_compute=plan.needs_compute))
 
     # main.tf
     parts: list[str] = [
