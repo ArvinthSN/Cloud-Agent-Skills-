@@ -61,7 +61,7 @@ python .agents/skills/cicd-pipeline-creator/scripts/render_pipeline.py ./my-app 
 
 Current application-build coverage is Python (pip, Poetry, uv) and Node.js (npm with package-lock.json). Other stacks and package managers are rejected rather than guessed. GitHub Actions dependencies in the generated template are pinned to full commit SHAs. Other platform templates use explicit scanner/runtime image tags; pin approved production images to registry digests as part of provider rollout.
 
-Generated deployment stages remain disabled or fail closed until target-specific deployment commands, credentials/workload identity and protected environments are configured. The renderer does not create provider-side secrets or environments.
+CircleCI command steps have explicit no-output timeouts; total execution limits remain governed by the CircleCI plan. GitHub Actions job permissions and timeouts are checked by the static validator.\n\nGenerated deployment stages remain disabled or fail closed until target-specific deployment commands, credentials/workload identity and protected environments are configured. The renderer does not create provider-side secrets or environments.
 
 ## Quick start and tests
 
