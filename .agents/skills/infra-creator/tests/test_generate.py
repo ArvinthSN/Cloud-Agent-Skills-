@@ -103,3 +103,15 @@ def test_terraform_validation_uses_temporary_copy(monkeypatch, tmp_path):
     assert calls
     assert all(path != tmp_path for path in calls)
     assert not (tmp_path / ".terraform").exists()
+
+
+
+@pytest.mark.parametrize("provider", SUPPORTED_PROVIDERS)
+def test_database_password_is_required_and_sensitive(provider):
+    from generate_terraform import _variables_block
+
+    variables = _variables_block(provider, "demo", "region-1")
+    start = variables.index('variable "db_password"')
+    block = variables[start:variables.index("}", start) + 1]
+    assert "sensitive" in block
+    assert "default" not in block
