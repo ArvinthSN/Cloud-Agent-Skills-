@@ -7,6 +7,8 @@ VALIDATOR = ROOT / "scripts" / "validate_pipeline.py"
 
 BASE = """name: check
 on: [push]
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
