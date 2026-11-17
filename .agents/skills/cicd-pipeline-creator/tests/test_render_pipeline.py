@@ -164,7 +164,7 @@ def test_all_five_platforms_render_and_pass_static_validation(tmp_path):
         text = pipeline.read_text(encoding="utf-8")
         assert "@@" not in text
         assert "npm ci" in text
-        assert "npm run build" in text
+        assert "node build.js" in text
         checked = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "validate_pipeline.py"), str(pipeline), "--json"],
             capture_output=True,
@@ -187,7 +187,7 @@ def test_renderer_rejects_newline_in_shell_command(tmp_path):
                 "lang": "node",
                 "pm": "npm",
                 "install": "npm ci",
-                "build": "npm run build\\necho injected",
+                "build": "npm run build\necho injected",
                 "test": "npm test",
                 "version": "20",
                 "lockfile": "package-lock.json",
