@@ -89,6 +89,30 @@ def test_static_policy_rejects_mutable_images_and_public_databases(tmp_path):
     assert any("Azure PostgreSQL" in item for item in findings)
 
 
+def test_no_database_plan_does_not_emit_database_secret_inputs(tmp_path):
+    from generate_terraform import InfraPlan, _variables_block
+
+    variables = _variables_block("aws", "demo", "us-east-1", needs_database=False)
+    assert 'variable "db_password"' not in variables
+    assert 'variable "db_username"' not in variables
+    assert 'variable "container_image"' in variables
+
+    plan = InfraPlan(
+        provider="aws",
+        architecture="monolithic",
+        needs_database=False,
+        needs_compute=True,
+        needs_network=True,
+    )
+    output = tmp_path / "no-database"
+    generate_project(output, plan, project_name="no-db")
+    generated_variables = (output / "variables.tf").read_text(encoding="utf-8")
+    tfvars_example = (output / "terraform.tfvars.example").read_text(encoding="utf-8")
+    assert 'variable "db_password"' not in generated_variables
+    assert "db_username" not in tfvars_example
+    assert "container_image" in tfvars_example
+
+
 def test_generate_preserves_non_empty_output_directory(tmp_path):
     scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
     arch = analyze(scan).to_dict()
