@@ -18,6 +18,7 @@ pool:
 variables:
   PIP_CACHE_DIR: $(Pipeline.Workspace)/.cache/pip
   npm_config_cache: $(Pipeline.Workspace)/.npm
+  PROJECT_LANGUAGE: @@LANGUAGE@@
 
 stages:
   - stage: Build
@@ -27,8 +28,10 @@ stages:
         steps:
           - checkout: self
           - task: UsePythonVersion@0
+            condition: eq(variables['PROJECT_LANGUAGE'], 'python')
             inputs: { versionSpec: '@@PYTHON_VERSION@@' }
           - task: NodeTool@0
+            condition: eq(variables['PROJECT_LANGUAGE'], 'node')
             inputs: { versionSpec: '@@NODE_VERSION@@' }
           - task: Cache@2
             inputs:
@@ -41,9 +44,9 @@ stages:
             workingDirectory: '@@WORKING_DIR@@'
             displayName: Install and build
           - script: |
-              test -n "$(ls -A '@@ARTIFACT_PATH@@' 2>/dev/null)" || { echo "##vso[task.logissue type=error]Build output is empty"; exit 1; }
+              test -n "$(ls -A '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' 2>/dev/null)" || { echo "##vso[task.logissue type=error]Build output is empty"; exit 1; }
             displayName: Verify build output
-          - publish: '@@ARTIFACT_PATH@@'          # repo-root relative, real build output only
+          - publish: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'          # repo-root relative, real build output only
             artifact: build
 
   - stage: Scan
