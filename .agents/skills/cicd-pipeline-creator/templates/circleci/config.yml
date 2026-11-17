@@ -94,6 +94,7 @@ jobs:
           command: |
             test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
             DEPLOY_ENABLED="${DEPLOY_ENABLED:-false}"
+            DEPLOY_ENABLED="${DEPLOY_ENABLED:-false}"
             if [ "$DEPLOY_ENABLED" = "true" ]; then
               echo "A target-specific deployment is not configured. Refusing to report success."
               exit 1
