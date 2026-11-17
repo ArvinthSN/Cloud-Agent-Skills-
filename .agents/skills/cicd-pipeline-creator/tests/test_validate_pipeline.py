@@ -30,6 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - run: |
+          if [ "$ALLOW_NO_TESTS" = "true" ]; then exit 0; fi
+          echo "No tests detected. Add tests or configure the explicit ALLOW_NO_TESTS override."
+          exit 1
       - run: pytest
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
