@@ -111,6 +111,18 @@ def validate(path: str):
     if "deploy" in lower and "production" in lower and not re.search(r"environment\s*:\s*production|environment\s*:\s*['\"]production['\"]", text, re.I):
         errors.append("Production deploy missing environment approval gate")
 
+    # GitHub Actions references are executable dependencies. Require a full immutable
+    # commit SHA; mutable tags and branches are not acceptable in generated workflows.
+    action_refs = re.findall(r"^\\s*uses\\s*:\\s*['\"]?([^\\s'\"]+)['\"]?\\s*$", text, re.M | re.I)
+    for action_ref in action_refs:
+        if action_ref.startswith(("./", "docker://")):
+            continue
+        _, separator, revision = action_ref.rpartition("@")
+        if not separator or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            errors.append(
+                f"GitHub Action must be pinned to a full 40-character commit SHA: {action_ref}"
+            )
+
     refs = re.findall(r"(?:uses|task|orb|image)\s*:\s*['\"]?([^\s'\"]+)", text, re.I)
     for ref in refs:
         if ref.startswith("$"):
