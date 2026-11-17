@@ -23,7 +23,7 @@ def test_execution_schemas_are_valid_json_and_versioned():
 
 def test_execution_report_has_explicit_check_states():
     schema = json.loads((SCHEMAS / "execution-report.schema.json").read_text(encoding="utf-8"))
-    states = schema["properties"]["checks"]["items"]["properties"]["status"]["enum"]
+    states = schema["$defs"]["check"]["properties"]["status"]["enum"]
     assert states == ["PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN"]
 
 
@@ -40,7 +40,7 @@ def test_shared_context_and_orchestrator_are_documented():
 
 def test_handoff_schema_and_executable_orchestrator_are_present():
     schema = json.loads((SCHEMAS / "skill-handoff.schema.json").read_text(encoding="utf-8"))
-    assert schema["properties"]["schema_version"]["const"] == "1.0"
+    assert schema["properties"]["schema_version"]["const"] == "1.1"
     assert "snapshot_hash" in schema["required"]
     orchestrator = ROOT / ".agents" / "skills" / "cloud-engineering-orchestrator"
     assert (orchestrator / "scripts" / "orchestrate.py").is_file()

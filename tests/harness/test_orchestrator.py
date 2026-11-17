@@ -62,7 +62,7 @@ def test_scan_emits_only_bounded_metadata_and_never_env_values(tmp_path):
     (project / ".env.example").write_text("DB_PASSWORD=replace-me\n", encoding="utf-8")
     context = orchestrator.scan_project(project)
 
-    assert context["schema_version"] == "1.0"
+    assert context["schema_version"] == "1.1"
     assert context["snapshot_hash"]
     assert "DB_PASSWORD" in context["sensitive_env_var_names"]
     serialized = json.dumps(context)

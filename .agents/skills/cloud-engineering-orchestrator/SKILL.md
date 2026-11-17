@@ -67,7 +67,7 @@ The canonical context stores file paths, sizes, hashes and detected metadata onl
 
 ## Safety and scope
 - --approve authorizes only local file generation described by the reviewed plan.
-- --overwrite separately authorizes replacing existing generated files. The orchestrator snapshots generated targets before execution and restores them on any failed/blocked/partial workflow.
+- --overwrite separately authorizes replacing existing generated files. The orchestrator snapshots generated targets before execution and restores them on any failed/blocked/partial workflow. Failed workflows are rolled back as a unit; generated outputs are not left in a partially applied state.
 - Never execute terraform apply/destroy, cloud provisioning, deployment, image publishing, secret retrieval or Git push.
 - Terraform validation runs only if the CLI is installed. Missing Terraform is NOT_RUN.
 - Pipeline rendering is not pipeline execution. Container static validation is not a Docker build.
