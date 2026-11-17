@@ -32,6 +32,16 @@ python .agents/skills/infra-creator/scripts/validate_terraform.py ./app/infra --
 
 Use --overwrite only after reviewing and explicitly approving replacement of a non-empty output directory. Generation requires --approve.
 
+## Immutable images and provider security
+
+Every generated compute module requires `container_image` in immutable OCI digest form, such as `registry.example.com/app@sha256:<64-hex-digest>`. Build and push the image separately before running Terraform. The generator does not build or publish images.
+
+- **AWS:** ECR tags are immutable. Set `certificate_arn` to an ACM certificate in the ALB region. HTTP redirects to HTTPS.
+- **Azure:** ACR admin credentials are disabled. Container Apps use a user-assigned managed identity with AcrPull. PostgreSQL uses a delegated subnet, private DNS zone and disabled public networking.
+- **GCP:** Cloud Run requires authentication by default. Public unauthenticated access is an explicit opt-in via `allow_unauthenticated = true`.
+
+Generated examples leave image digests and certificate values as commented placeholders. Supply valid values through reviewed tfvars or protected pipeline variables; never commit secrets.
+
 ## Database credentials
 
 The generated db_password variable is required and marked sensitive. Supply it through a secret manager or a protected environment variable such as TF_VAR_db_password. Never write the password into committed tfvars, source code, pipeline YAML or logs.
@@ -51,6 +61,10 @@ infra-creator/
 ├── examples/
 └── tests/
 ~~~
+
+## Static security policies
+
+The validator checks for mutable `:latest` image references, mutable ECR tags, Azure registry admin credentials, public Azure PostgreSQL, unconditional GCP `allUsers` access, missing AWS ALB HTTPS redirect/certificate controls and missing immutable image-digest input validation. These policies run without cloud credentials or Terraform CLI.
 
 ## Safety and validation
 
