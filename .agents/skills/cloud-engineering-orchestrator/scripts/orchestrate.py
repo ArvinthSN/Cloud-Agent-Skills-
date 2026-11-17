@@ -912,7 +912,15 @@ def execute_run(args: argparse.Namespace) -> dict[str, Any]:
     started_at = utc_now()
     skill_results: dict[str, Any] = {}
     all_artifacts: list[dict[str, str]] = []
-    all_checks: list[dict[str, str]] = [\n        _check("output-preflight", "WARNING" if existing_outputs else "PASS", "Existing files will be replaced under explicit --overwrite approval." if existing_outputs else "No existing output conflicts detected.")\n    ]\n    assumptions = list(plan.get("assumptions", []))
+    all_checks: list[dict[str, str]] = [
+        _check(
+            "output-preflight",
+            "WARNING" if existing_outputs else "PASS",
+            "Existing files will be replaced under explicit --overwrite approval."
+            if existing_outputs else "No existing output conflicts detected.",
+        )
+    ]
+    assumptions = list(plan.get("assumptions", []))
     risks: list[str] = []
     manual: list[str] = []
     for skill in plan["selected_skills"]:
