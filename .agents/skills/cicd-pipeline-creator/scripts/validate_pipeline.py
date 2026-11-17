@@ -152,15 +152,13 @@ def validate(path: str):
                 if not isinstance(timeout, int) or not 1 <= timeout <= 60:
                     errors.append(f"GitHub job '{job_name}' must set timeout-minutes between 1 and 60.")
             test_config = jobs.get("test", {})
-
-            def collect_scalars(value):
-                if isinstance(value, dict):
-                    return " ".join(collect_scalars(item) for item in value.values())
-                if isinstance(value, (list, tuple)):
-                    return " ".join(collect_scalars(item) for item in value)
-                return str(value)
-
-            test_text = collect_scalars(test_config).lower()
+            test_steps = test_config.get("steps", []) if isinstance(test_config, dict) else []
+            test_commands = [
+                str(step.get("run", ""))
+                for step in test_steps
+                if isinstance(step, dict) and "run" in step
+            ]
+            test_text = "\\n".join(test_commands).lower()
             if (
                 'if [ "$allow_no_tests" = "true" ]; then exit 0; fi' not in test_text
                 or "no tests detected" not in test_text
