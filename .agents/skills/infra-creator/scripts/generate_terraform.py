@@ -249,9 +249,9 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
         }}
 
         variable "db_password" {{
-          type      = string
-          sensitive = true
-          default   = ""
+          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
+          type        = string
+          sensitive   = true
         }}
         """
     if provider == "azure":
