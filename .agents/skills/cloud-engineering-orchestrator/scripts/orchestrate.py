@@ -53,7 +53,7 @@ SKILL_DEPENDENCIES = {
     "cicd-pipeline-creator": ("app-containerizer",),
     "infra-creator": ("app-containerizer",),
 }
-CI_PLATFORMS = {"github", "azure"}
+CI_PLATFORMS = {"github", "azure", "gitlab", "jenkins", "circleci"}
 PROVIDERS = {"aws", "azure", "gcp"}
 COMPOSE_SERVICES = {"postgresql", "mysql", "redis"}
 ENV_PATTERN = re.compile(
@@ -804,7 +804,14 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             handoff["ci_project"] = _ci_project(selected)
             handoff["platform"] = args.platform
             handoff["output_dir"] = str(ci_out)
-            handoff["outputs"] = ["pipeline.yml" if args.platform == "github" else "azure-pipeline.yml", "PIPELINE_NOTES.md"]
+            pipeline_outputs = {
+                "github": "pipeline.yml",
+                "azure": "azure-pipeline.yml",
+                "gitlab": ".gitlab-ci.yml",
+                "jenkins": "Jenkinsfile",
+                "circleci": ".circleci/config.yml",
+            }
+            handoff["outputs"] = [pipeline_outputs[args.platform], "PIPELINE_NOTES.md"]
         else:
             handoff["input"] = _infra_scan(context)
             handoff["provider"] = args.provider
@@ -1098,7 +1105,13 @@ def transaction_targets(plan: dict[str, Any], run_dir: Path) -> list[tuple[Path,
                 ["Dockerfile", ".dockerignore"] + (["compose.yaml"] if handoff.get("compose_services") else [])
             ))
         elif skill == "cicd-pipeline-creator":
-            targets.append((Path(handoff["output_dir"]), True))
+            # Snapshot only declared CI artifacts. Azure/GitLab/Jenkins outputs
+            # live at the project root; snapshotting that directory would copy
+            # the entire application and make rollback both expensive and risky.
+            targets.extend(
+                (Path(handoff["output_dir"]) / output, False)
+                for output in handoff.get("outputs", [])
+            )
         else:
             targets.append((Path(handoff["output_dir"]), True))
 
