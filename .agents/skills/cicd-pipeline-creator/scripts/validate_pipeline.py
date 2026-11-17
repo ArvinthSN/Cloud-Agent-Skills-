@@ -164,7 +164,12 @@ def validate(path: str):
     if "cache" not in lower and "actions/cache" not in lower and "cache@2" not in lower:
         errors.append("Missing dependency cache configuration")
 
-    if platform not in {"jenkins", "circleci"} and "deploy" in lower and "production" in lower and not re.search(r"environment\s*:\s*production|environment\s*:\s*['\"]production['\"]", text, re.I):
+    production_environment = re.search(
+        r"environment\s*:\s*(?:['"]?production['"]?|[\s\S]{0,160}?\bname\s*:\s*['"]?production['"]?)",
+        text,
+        re.I,
+    )
+    if platform not in {"jenkins", "circleci"} and "deploy" in lower and "production" in lower and not production_environment:
         errors.append("Production deploy missing environment approval gate")
 
     refs = re.findall(r"(?:uses|task|orb|image)\s*:\s*['\"]?([^\s'\"]+)", text, re.I)
