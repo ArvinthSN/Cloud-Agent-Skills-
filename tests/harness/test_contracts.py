@@ -26,7 +26,7 @@ def test_shared_context_and_orchestrator_are_documented():
     orchestrator = ROOT / ".agents" / "skills" / "cloud-engineering-orchestrator" / "SKILL.md"
     content = orchestrator.read_text(encoding="utf-8")
     assert "one bounded read-only scan" in content
-    assert "Never run Terraform apply/destroy" in content
+    assert "Never execute terraform apply/destroy" in content
 
 
 
