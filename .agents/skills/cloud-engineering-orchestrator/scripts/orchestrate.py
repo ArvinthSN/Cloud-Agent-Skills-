@@ -233,7 +233,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
             if not start_cmd:
                 entry = next((rel for rel in relative_paths if Path(rel).name in {"server.js", "index.js", "main.js"}), None)
                 if entry and pm == "npm":
-                    start_cmd = ["node", str(Path(entry).relative_to(project_root)) if project_root != root else entry]
+                    start_cmd = ["node", entry]
             framework = next((name for name, markers in FRAMEWORK_MARKERS.items() if any(marker in combined for marker in markers)), "unknown")
             ci_lang = "node"
             lockfile = {"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock"}.get(pm)
@@ -279,7 +279,7 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
             install_cmd = build_cmd
             test_cmd = "mvn -B verify" if pm == "maven" else None
             lockfile = None
-            entry = next((rel for rel in paths if Path(rel).name in {"Application.java", "Main.java"}), "unknown")
+            entry = next((rel for rel in relative_paths if Path(rel).name in {"Application.java", "Main.java"}), "unknown")
             start_cmd = ["java", "-jar", "/app/app.jar"] if pm == "maven" else []
             framework = "spring" if "spring-boot" in combined else "java"
             ci_lang = "java"
@@ -518,6 +518,13 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         context["selected_project"] = selected
     if "app-containerizer" in skills and selected["language"] not in {"python", "node", "java"}:
         raise OrchestratorError(f"app-containerizer does not currently support {selected['language']}.")
+    if "app-containerizer" in skills:
+        if selected["language"] == "node" and selected["package_manager"] != "npm":
+            raise OrchestratorError("The current Dockerfile generator requires Node.js with npm and package-lock.json.")
+        if selected["language"] == "java" and selected["package_manager"] != "maven":
+            raise OrchestratorError("The current Java Dockerfile generator supports Maven projects only.")
+        if selected["language"] == "python" and selected["package_manager"] not in {"pip", "poetry", "uv"}:
+            raise OrchestratorError(f"Unsupported Python package manager: {selected['package_manager']}.")
     if "cicd-pipeline-creator" in skills:
         if selected["ci_lang"] not in {"python", "node"}:
             raise OrchestratorError(f"CI/CD renderer does not currently support {selected['ci_lang']}; supported stacks are Python and Node.js.")
