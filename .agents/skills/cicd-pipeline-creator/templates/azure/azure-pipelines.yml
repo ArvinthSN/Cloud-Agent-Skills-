@@ -82,8 +82,10 @@ stages:
         steps:
           - checkout: self
           - task: UsePythonVersion@0
+            condition: eq(variables['PROJECT_LANGUAGE'], 'python')
             inputs: { versionSpec: '@@PYTHON_VERSION@@' }
           - task: NodeTool@0
+            condition: eq(variables['PROJECT_LANGUAGE'], 'node')
             inputs: { versionSpec: '@@NODE_VERSION@@' }
           - task: Cache@2
             inputs:
