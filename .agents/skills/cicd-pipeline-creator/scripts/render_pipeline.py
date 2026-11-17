@@ -212,7 +212,7 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file.parent.mkdir(parents=True, exist_ok=True)
     # Preserve deterministic LF endings on Windows, macOS and Linux.
-    with out_file.open("w", encoding="utf-8", newline="\\n") as handle:
+    with out_file.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(rendered)
     write_notes(out_dir, platform, values)
     print(str(out_file))
