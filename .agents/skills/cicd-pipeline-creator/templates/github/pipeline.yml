@@ -1,7 +1,7 @@
-# Source: adapted from github.com/actions/starter-workflows + vendor READMEs
-# Fetched: @@FETCH_DATE@@   Upstream ref: @@UPSTREAM_REF@@
-# TODO(verify): resolve every tag below to a commit SHA, keep the tag as a comment
-name: CI-CD Pipeline
+# Source: reviewed GitHub Actions starter and official publisher examples
+# Fetched: @@FETCH_DATE@@   Template revision: @@UPSTREAM_REF@@
+# TODO(verify): pin third-party action tags to immutable SHAs before production use
+name: CI pipeline
 
 on:
   push:
@@ -17,45 +17,61 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  PROJECT_LANGUAGE: @@LANGUAGE@@
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
-        with: { python-version: '@@PYTHON_VERSION@@' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '@@NODE_VERSION@@' }
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-deps-
-      - run: @@INSTALL_CMD@@
-        working-directory: @@WORKING_DIR@@
-      - run: @@BUILD_CMD@@
-        working-directory: @@WORKING_DIR@@
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ github.run_id }}
-          path: @@ARTIFACT_PATH@@        # real build output only
-          if-no-files-found: error
-
-  scan:                                  # source/dependency scan: needs no build artifact
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0, persist-credentials: false }
-      - uses: gitleaks/gitleaks-action@v2        # TODO(verify): pin SHA; orgs need GITLEAKS_LICENSE
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        if: env.PROJECT_LANGUAGE == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '@@PYTHON_VERSION@@'
+      - name: Set up Node.js
+        if: env.PROJECT_LANGUAGE == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '@@NODE_VERSION@@'
+      - uses: actions/cache@v4
+        with:
+          path: @@CACHE_PATH@@
+          key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
+      - name: Install dependencies
+        run: @@INSTALL_CMD@@
+        working-directory: @@WORKING_DIR@@
+      - name: Build distributable
+        run: @@BUILD_CMD@@
+        working-directory: @@WORKING_DIR@@
+      - name: Verify distributable
+        run: |
+          test -d '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
+          test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.run_id }}
+          path: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
+          if-no-files-found: error
+          retention-days: 7
+
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@v2 # TODO(verify): pin immutable SHA; license may be required
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-      - uses: aquasecurity/trivy-action@0.28.0   # TODO(verify): pin SHA
+      - uses: aquasecurity/trivy-action@0.28.0 # TODO(verify): pin immutable SHA
         with:
           scan-type: fs
           severity: HIGH,CRITICAL
@@ -68,19 +84,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
-        with: { python-version: '@@PYTHON_VERSION@@' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '@@NODE_VERSION@@' }
-      - uses: actions/cache@v4              # reinstall: tests need dev deps the artifact lacks
         with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-deps-
-      - run: @@INSTALL_CMD@@
+          persist-credentials: false
+      - name: Set up Python
+        if: env.PROJECT_LANGUAGE == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '@@PYTHON_VERSION@@'
+      - name: Set up Node.js
+        if: env.PROJECT_LANGUAGE == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '@@NODE_VERSION@@'
+      - uses: actions/cache@v4
+        with:
+          path: @@CACHE_PATH@@
+          key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
+      - name: Install test dependencies
+        run: @@INSTALL_CMD@@
         working-directory: @@WORKING_DIR@@
       - name: Run tests
         env:
@@ -94,22 +115,20 @@ jobs:
           fi
           @@TEST_CMD@@
         working-directory: @@WORKING_DIR@@
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ github.run_id }}
-          path: @@TEST_REPORT_PATH@@        # junit xml + coverage only
-          if-no-files-found: warn
 
-  deploy-gate:
-    needs: [scan, test]
+  deploy:
+    needs: [build, scan, test]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      enabled: ${{ steps.g.outputs.enabled }}
+    environment: production
     steps:
-      - id: g
-        env: { DEPLOY_ENABLED: '${{ vars.DEPLOY_ENABLED }}' }
+      - name: Deployment remains disabled until a target-specific job is configured
+        env:
+          DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
         run: |
-          if [ "$DEPLOY_ENABLED" =
+          if [ "$DEPLOY_ENABLED" = "true" ]; then
+            echo "::error::DEPLOY_ENABLED is true, but this generic template has no configured deploy target. Add and validate a target-specific deployment action before enabling it."
+            exit 1
+          fi
+          echo "::notice::Build, scan and test completed. Deployment is disabled; configure a target-specific job before enabling releases."
