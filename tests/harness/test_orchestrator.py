@@ -508,3 +508,36 @@ def test_resume_does_not_require_overwrite_for_interrupted_generated_files(tmp_p
     report = orchestrator.resume_run(args)
     assert report["status"] == "completed"
     assert (project / "Dockerfile").read_text(encoding="utf-8") == "FROM node:22\n"
+
+
+def test_project_lock_serializes_distinct_run_directories(tmp_path):
+    project = make_node_project(tmp_path / "shared-project")
+    first_run = tmp_path / "run-a"
+    second_run = tmp_path / "run-b"
+    assert first_run != second_run
+
+    first = orchestrator.project_execution_lock(project)
+    second = orchestrator.project_execution_lock(project)
+
+    with first:
+        with pytest.raises(orchestrator.OrchestratorError, match="Another orchestrator process holds"):
+            with second:
+                pass
+
+    # The OS lock is released even though the persistent lock file remains.
+    with second:
+        pass
+
+
+def test_project_lock_directory_rejects_symlinked_state_directory(tmp_path):
+    project = make_node_project(tmp_path / "symlink-project")
+    real_state = tmp_path / "real-state"
+    real_state.mkdir()
+    link = project / ".cloud-agent"
+    try:
+        link.symlink_to(real_state, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks are unavailable on this runner.")
+
+    with pytest.raises(orchestrator.OrchestratorError, match="must not be symlinks"):
+        orchestrator.project_execution_lock(project)
