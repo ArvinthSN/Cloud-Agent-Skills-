@@ -184,6 +184,14 @@ def _manifest_projects(records: list[dict[str, Any]], root: Path) -> list[dict[s
 
     projects: list[dict[str, Any]] = []
     for directory, names in sorted(by_dir.items()):
+        python_manifests = names & {"pyproject.toml", "requirements.txt", "setup.py", "poetry.lock", "uv.lock"}
+        other_project_manifests = names & {"pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml"}
+        runtime_groups = sum(bool(group) for group in ({"package.json"} & names, python_manifests, other_project_manifests))
+        if runtime_groups > 1:
+            raise OrchestratorError(
+                f"Multiple language manifest groups share project directory '{directory}'. "
+                "Split them into separate project directories before orchestration."
+            )
         project_root = root / ("" if directory == "." else directory)
         text_budget = [MAX_TOTAL_TEXT_BYTES]
         manifest_text = ""
