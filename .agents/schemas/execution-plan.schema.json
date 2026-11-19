@@ -187,6 +187,9 @@
           "enum": [
             "github",
             "azure",
+            "gitlab",
+            "jenkins",
+            "circleci",
             null
           ]
         },
