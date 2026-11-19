@@ -548,3 +548,30 @@ def test_project_lock_directory_rejects_symlinked_state_directory(tmp_path):
 
     with pytest.raises(orchestrator.OrchestratorError, match="must not be symlinks"):
         orchestrator.project_execution_lock(project)
+
+
+
+def test_auto_plan_writes_architecture_and_selection_contracts(tmp_path):
+    project = make_node_project(tmp_path / "auto-app")
+    run_dir = tmp_path / "auto-run"
+    args = orchestrator.build_parser().parse_args([
+        "plan",
+        "--project", str(project),
+        "--goal", "Dockerize this application",
+        "--skills", "auto",
+        "--run-dir", str(run_dir),
+    ])
+
+    plan = orchestrator.create_plan(args)
+    profile = json.loads((run_dir / "architecture-profile.json").read_text(encoding="utf-8"))
+    selection = json.loads((run_dir / "skill-selection.json").read_text(encoding="utf-8"))
+    handoff = json.loads(
+        (run_dir / "handoffs" / "app-containerizer" / "handoff.json").read_text(encoding="utf-8")
+    )
+
+    assert plan["selected_skills"] == ["app-containerizer"]
+    assert plan["intelligence"]["selection_mode"] == "auto"
+    assert plan["project"]["architecture"] == "monolith"
+    assert plan["project"]["confidence"] == profile["confidence"]
+    assert selection["selected_skills"] == ["app-containerizer"]
+    assert handoff["architecture_profile"]["file"] == str(run_dir / "architecture-profile.json")
