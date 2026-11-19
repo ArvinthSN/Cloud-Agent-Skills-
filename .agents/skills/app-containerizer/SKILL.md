@@ -51,4 +51,6 @@ python scripts/generate_compose.py --path ./app --plan plan.json --services post
 python scripts/validate_container.py --path ./app
 ~~~
 
+When `scan_repository.py --output <path>` is used, the full scan is saved to that JSON artifact and stdout returns only a compact receipt. Omit `--output` when a downstream tool explicitly needs the full JSON on stdout.
+
 Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired.
