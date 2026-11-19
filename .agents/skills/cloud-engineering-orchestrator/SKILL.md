@@ -40,6 +40,30 @@ python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py reco
 
 Add --project-dir backend when a monorepo has multiple applications. Add --compose-services postgresql,redis only when those local dependencies are intentionally requested. Add --overwrite as a separate approval when an existing Dockerfile, pipeline or Terraform output must be replaced.
 
+## Automatic skill selection
+
+The existing explicit workflow remains supported. Use `--skills auto` when the goal should drive skill selection:
+
+~~~bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py plan \\
+  --project ./my-app \\
+  --goal "Containerize the app and create a GitHub Actions pipeline" \\
+  --skills auto \\
+  --platform github \\
+  --run-dir ./.cloud-agent/runs/my-app
+~~~
+
+Automatic selection uses deterministic goal-intent rules and detected project evidence. It selects only skills whose prerequisites are satisfied. Missing inputs (for example, a CI platform, cloud provider or monorepo project directory) are recorded in `skill-selection.json`; the engine never guesses them. If no skill is ready, planning stops with the unresolved requirements.
+
+## Intelligence artifacts
+
+Every plan now writes:
+
+- `architecture-profile.json` — architecture classification, component inventory, evidence and heuristic confidence.
+- `skill-selection.json` — explicit/automatic selection mode, selected skills, recommendations, blockers and unresolved requirements.
+
+The execution plan references both artifacts, records the architecture classification and confidence, and each specialist handoff carries a compact reference to the architecture profile. Confidence is a deterministic evidence score, not a statistical guarantee. Review the evidence and uncertainties before approval.
+
 ## Commands
 
 ### plan
