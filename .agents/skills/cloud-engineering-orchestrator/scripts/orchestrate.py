@@ -795,7 +795,9 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         "selected_skills": skills,
         "intelligence": {
             "architecture_profile_file": str(architecture_profile_path),
+            "architecture_profile_hash": payload_hash(architecture_profile),
             "skill_selection_file": str(selection_path),
+            "skill_selection_hash": payload_hash(selection),
             "selection_mode": selection_mode,
             "architecture": architecture_profile["architecture"],
             "confidence": architecture_profile["confidence"],
@@ -899,6 +901,48 @@ def _verify_run_fresh(
         raise OrchestratorError("Project root mismatch between execution plan and context.")
     if payload_hash(context) != plan["project"].get("context_hash"):
         raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
+    intelligence = plan.get("intelligence")
+    if intelligence:
+        intelligence_artifacts = (
+            (
+                "architecture_profile_file",
+                "architecture_profile_hash",
+                "architecture-profile.json",
+                "architecture-profile.schema.json",
+                "architecture profile",
+            ),
+            (
+                "skill_selection_file",
+                "skill_selection_hash",
+                "skill-selection.json",
+                "skill-selection.schema.json",
+                "skill selection",
+            ),
+        )
+        loaded_intelligence: dict[str, dict[str, Any]] = {}
+        for path_key, hash_key, filename, schema_name, label in intelligence_artifacts:
+            expected_path = (run_dir / filename).resolve()
+            artifact_path = Path(intelligence.get(path_key, "")).resolve()
+            if artifact_path != expected_path or artifact_path.is_symlink() or not artifact_path.is_file():
+                raise OrchestratorError(f"Missing or unsafe {label} artifact. Create a fresh plan.")
+            artifact = read_json(artifact_path)
+            validate_payload(schema_name, artifact, label)
+            if payload_hash(artifact) != intelligence.get(hash_key):
+                raise OrchestratorError(f"{label.capitalize()} changed after planning. Create a fresh plan.")
+            loaded_intelligence[label] = artifact
+        profile = loaded_intelligence["architecture profile"]
+        selection = loaded_intelligence["skill selection"]
+        if profile.get("snapshot_hash") != plan["project"].get("snapshot_hash"):
+            raise OrchestratorError("Architecture profile does not match the planned project snapshot.")
+        if selection.get("project_snapshot_hash") != plan["project"].get("snapshot_hash"):
+            raise OrchestratorError("Skill selection does not match the planned project snapshot.")
+        if selection.get("selected_skills") != plan.get("selected_skills"):
+            raise OrchestratorError("Skill selection artifact does not match the execution plan.")
+        if (
+            profile.get("architecture") != plan["project"].get("architecture")
+            or profile.get("confidence") != plan["project"].get("confidence")
+        ):
+            raise OrchestratorError("Architecture profile does not match the execution plan.")
     root = Path(plan["project"]["root"]).resolve()
     if verify_project:
         cache_config = plan.get("workflow", {}).get("context_cache", {})
@@ -941,6 +985,14 @@ def _verify_run_fresh(
             raise OrchestratorError(f"Invalid or mismatched handoff for {skill}.")
         if handoff.get("snapshot_hash") != plan["project"]["snapshot_hash"]:
             raise OrchestratorError(f"Project snapshot mismatch in handoff for {skill}.")
+        if intelligence:
+            architecture_ref = handoff.get("architecture_profile", {})
+            if (
+                architecture_ref.get("file") != intelligence.get("architecture_profile_file")
+                or architecture_ref.get("architecture") != plan["project"].get("architecture")
+                or architecture_ref.get("confidence") != plan["project"].get("confidence")
+            ):
+                raise OrchestratorError(f"Architecture profile reference mismatch in handoff for {skill}.")
         if handoff.get("approval_required") is not True:
             raise OrchestratorError(f"Approval gate missing in handoff for {skill}.")
         if skill == "app-containerizer" and not isinstance(handoff.get("input"), dict):
