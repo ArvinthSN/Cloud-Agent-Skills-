@@ -191,6 +191,34 @@ def _verify_container(
         _check(checks, skill="app-containerizer", category="build", name="docker-image-build",
                status=status, tool="docker", detail=detail)
         if built is not None and built.returncode == 0:
+            trivy = shutil.which("trivy")
+            if not trivy:
+                _check(checks, skill="app-containerizer", category="security", name="trivy-image-scan",
+                       status="NOT_RUN", tool="trivy", detail="Trivy is not installed; the locally built image was not vulnerability-scanned.")
+            else:
+                scanned = _run(
+                    [trivy, "image", "--scanners", "vuln,secret", "--skip-db-update",
+                     "--exit-code", "1", "--format", "json", tag],
+                    cwd=root, timeout=600,
+                )
+                payload = _parse_json(scanned.stdout if scanned else "")
+                if scanned is None or not isinstance(payload, dict):
+                    scan_status, scan_detail = "NOT_RUN", "Trivy image scan could not complete or its vulnerability database is unavailable."
+                else:
+                    results = payload.get("Results", [])
+                    findings = sum(
+                        len(item.get("Vulnerabilities") or []) + len(item.get("Secrets") or [])
+                        for item in results
+                    )
+                    if findings:
+                        scan_status = "FAIL"
+                    elif scanned.returncode == 0:
+                        scan_status = "PASS"
+                    else:
+                        scan_status = "NOT_RUN"
+                    scan_detail = f"Trivy image scan findings={findings}; exit_code={scanned.returncode}. Match contents are omitted."
+                _check(checks, skill="app-containerizer", category="security", name="trivy-image-scan",
+                       status=scan_status, tool="trivy", detail=scan_detail)
             removed = _run([docker, "image", "rm", tag], cwd=root, timeout=60)
             _check(checks, skill="app-containerizer", category="build", name="docker-image-cleanup",
                    status="PASS" if removed is not None and removed.returncode == 0 else "WARNING",
