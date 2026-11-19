@@ -271,7 +271,9 @@ def test_cli_plan_and_execute_commands_work_end_to_end(tmp_path):
     assert receipt["artifact_count"] >= 2
     assert receipt["report"] == str(run_dir / "execution-report.json")
     assert receipt["checks"]["PASS"] > 0
-    full_report = json.loads(Path(receipt["report"]).read_text(encoding="utf-8"))
+    full_report_text = Path(receipt["report"]).read_text(encoding="utf-8")
+    full_report = json.loads(full_report_text)
+    assert len(executed.stdout) < len(full_report_text)
     assert full_report["overwrite_approved"] is False
     assert full_report["skill_reports"]["app-containerizer"]["status"] == "completed"
     assert (project / "Dockerfile").is_file()
