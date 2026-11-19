@@ -73,7 +73,7 @@ Every successful generation now enters a verification gate before the output tra
 - Container validation runs static checks and Hadolint when installed.
 - Pipeline validation runs the platform policy validator and available native tools (actionlint, CircleCI CLI or Groovy compiler).
 - Terraform validation runs provider-aware policy checks plus fmt/init/validate when Terraform is installed.
-- Available security tools run Gitleaks (secrets), Trivy (filesystem misconfiguration/secrets) and Checkov (Terraform policy).
+- Available security tools run Gitleaks (secrets), Trivy (filesystem misconfiguration/secrets and local image vulnerability/secret scans after an approved Docker build) and Checkov (Terraform policy).
 - Missing optional tools are reported as NOT_RUN, never as PASS. Verification reports use PASS, FAIL, WARNING, SKIPPED and NOT_RUN.
 
 A FAIL in a mandatory verification check marks the affected workflow as failed and triggers the existing output transaction rollback. Missing optional tools and warnings are recorded and produce a partial verification status without pretending the artifacts are fully verified.
