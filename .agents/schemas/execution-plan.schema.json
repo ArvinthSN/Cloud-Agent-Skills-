@@ -290,7 +290,9 @@
       "additionalProperties": false,
       "required": [
         "architecture_profile_file",
+        "architecture_profile_hash",
         "skill_selection_file",
+        "skill_selection_hash",
         "selection_mode",
         "architecture",
         "confidence",
@@ -331,6 +333,14 @@
           "items": {
             "type": "string"
           }
+        },
+        "architecture_profile_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "skill_selection_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
         }
       }
     }
