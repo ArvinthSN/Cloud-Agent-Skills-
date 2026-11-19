@@ -86,6 +86,6 @@ def test_verification_contract_documents_opt_in_builds_and_statuses():
     assert schema["properties"]["status"]["enum"] == ["completed", "partial", "failed"]
     assert schema["properties"]["requested_verifications"]["properties"]["docker_build"]["type"] == "boolean"
     assert schema["properties"]["requested_verifications"]["properties"]["terraform_plan"]["type"] == "boolean"
-    assert schema["$defs"] if "$defs" in schema else schema["properties"]["checks"]["items"]["properties"]["status"]["enum"] == [
+    assert schema["properties"]["checks"]["items"]["properties"]["status"]["enum"] == [
         "PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN"
     ]
