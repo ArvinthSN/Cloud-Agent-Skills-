@@ -109,6 +109,35 @@
     "executed_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "architecture_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "architecture",
+        "confidence"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "enum": [
+            "monolith",
+            "frontend_backend",
+            "microservices",
+            "multi_project",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
     }
   },
   "allOf": [
