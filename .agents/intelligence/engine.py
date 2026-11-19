@@ -19,9 +19,9 @@ SUPPORTED_CONTAINER_LANGUAGES = {"python", "node", "java"}
 FRONTEND_FRAMEWORKS = {"react", "vue", "nextjs", "angular"}
 BACKEND_FRAMEWORKS = {"fastapi", "flask", "django", "express", "nestjs", "spring", "gin"}
 GOAL_INTENTS = {
-    "app-containerizer": re.compile(r"\b(container|containerize|docker|image build)\b", re.I),
+    "app-containerizer": re.compile(r"\b(container\w*|docker\w*|image build)\b", re.I),
     "cicd-pipeline-creator": re.compile(r"\b(ci/?cd|pipeline|github actions|gitlab ci|jenkins|circleci|azure pipeline)\b", re.I),
-    "infra-creator": re.compile(r"\b(terraform|infrastructure|infra|cloud resources|provision)\b", re.I),
+    "infra-creator": re.compile(r"\b(terraform|infrastructure|infra|cloud resources|provision|deploy|deployment)\b", re.I),
 }
 
 
@@ -116,7 +116,7 @@ def build_architecture_profile(context: dict[str, Any]) -> dict[str, Any]:
         confidence = 0.0
         uncertainties.append("Repository scan was truncated; architecture confidence is invalid.")
     if len(context.get("projects", [])) > 1:
-        uncertainties.append("Multiple application projects were detected; review service boundaries and select a project before application-specific generation.")
+        uncertainties.append("Multiple application projects were detected; review service boundaries before choosing a deployment topology.")
 
     return {
         "schema_version": PROFILE_SCHEMA_VERSION,
