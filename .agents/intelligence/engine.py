@@ -213,9 +213,11 @@ def build_skill_selection(
             "reason": reason,
             "missing_requirements": missing,
         })
-        if ready:
+        if ready or mode == "explicit":
+            # Explicit mode preserves the user's requested set; blockers remain visible
+            # and the orchestrator's existing validation gates still fail closed.
             selected.append(skill)
-        else:
+        if not ready:
             blocked.append({
                 "skill": skill,
                 "missing_requirements": missing,
