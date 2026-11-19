@@ -19,8 +19,13 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SKILLS_ROOT = REPO_ROOT / ".agents" / "skills"
 SCHEMA_VERSION = "1.1"
-SCANNER_VERSION = "1.1"
+SCANNER_VERSION = "1.2"
 SCHEMAS_ROOT = REPO_ROOT / ".agents" / "schemas"
+INTELLIGENCE_ROOT = REPO_ROOT / ".agents"
+if str(INTELLIGENCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(INTELLIGENCE_ROOT))
+
+from intelligence import build_architecture_profile, build_skill_selection
 MAX_TRANSACTION_FILES = 5000
 MAX_TRANSACTION_BYTES = 128 * 1024 * 1024
 STATE_SCHEMA_VERSION = "1.0"
@@ -684,24 +689,55 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         cache_enabled=not args.no_cache,
         cache_info=cache_info,
     )
-    skills = [name.strip() for name in args.skills.split(",") if name.strip()]
-    if not skills or len(set(skills)) != len(skills) or set(skills) - SKILL_NAMES:
-        raise OrchestratorError(f"--skills must be a comma-separated unique subset of {sorted(SKILL_NAMES)}")
+    raw_skills = args.skills.strip()
+    selection_mode = "auto" if raw_skills.lower() == "auto" else "explicit"
+    requested_skills = [] if selection_mode == "auto" else [
+        name.strip() for name in raw_skills.split(",") if name.strip()
+    ]
+    if selection_mode == "explicit" and (
+        not requested_skills
+        or len(set(requested_skills)) != len(requested_skills)
+        or set(requested_skills) - SKILL_NAMES
+    ):
+        raise OrchestratorError(
+            f"--skills must be 'auto' or a comma-separated unique subset of {sorted(SKILL_NAMES)}"
+        )
+    services = [item.strip() for item in args.compose_services.split(",") if item.strip()]
+    if set(services) - COMPOSE_SERVICES or len(services) != len(set(services)):
+        raise OrchestratorError(f"--compose-services accepts unique values from {sorted(COMPOSE_SERVICES)}")
+    if services and selection_mode == "explicit" and "app-containerizer" not in requested_skills:
+        raise OrchestratorError("--compose-services requires app-containerizer.")
+    project_required = selection_mode == "explicit" and any(
+        name in requested_skills for name in ("app-containerizer", "cicd-pipeline-creator")
+    )
+    selected = select_project(context["projects"], args.project_dir, project_required)
+    if selected is not None:
+        context["selected_project"] = selected
+
+    architecture_profile = build_architecture_profile(context)
+    selection = build_skill_selection(
+        mode=selection_mode,
+        goal=args.goal.strip(),
+        requested_skills=requested_skills,
+        profile=architecture_profile,
+        context=context,
+        provider=args.provider,
+        platform=args.platform,
+        project_dir=selected["dir"] if selected is not None else args.project_dir,
+    )
+    skills = selection["selected_skills"] if selection_mode == "auto" else requested_skills
+    if selection_mode == "auto" and not skills:
+        unresolved = ", ".join(selection["unresolved_requirements"]) or "goal_intent"
+        raise OrchestratorError(
+            "Automatic selection found no executable skills. Resolve these requirements or specify --skills explicitly: "
+            + unresolved
+        )
     if "infra-creator" in skills and not args.provider:
         raise OrchestratorError("--provider is required when infra-creator is selected.")
     if "infra-creator" in skills and args.provider not in PROVIDERS:
         raise OrchestratorError(f"Unsupported provider: {args.provider}")
     if "cicd-pipeline-creator" in skills and args.platform not in CI_PLATFORMS:
         raise OrchestratorError(f"--platform must be one of {sorted(CI_PLATFORMS)} when cicd-pipeline-creator is selected.")
-    services = [item.strip() for item in args.compose_services.split(",") if item.strip()]
-    if set(services) - COMPOSE_SERVICES or len(services) != len(set(services)):
-        raise OrchestratorError(f"--compose-services accepts unique values from {sorted(COMPOSE_SERVICES)}")
-    if services and "app-containerizer" not in skills:
-        raise OrchestratorError("--compose-services requires app-containerizer.")
-    project_required = any(name in skills for name in ("app-containerizer", "cicd-pipeline-creator"))
-    selected = select_project(context["projects"], args.project_dir, project_required)
-    if selected is not None:
-        context["selected_project"] = selected
     if "app-containerizer" in skills and selected["language"] not in {"python", "node", "java"}:
         raise OrchestratorError(f"app-containerizer does not currently support {selected['language']}.")
     if "app-containerizer" in skills:
@@ -729,6 +765,12 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
     if run_dir.exists() and any(run_dir.iterdir()):
         raise OrchestratorError(f"Run directory is not empty: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
+    architecture_profile_path = run_dir / "architecture-profile.json"
+    selection_path = run_dir / "skill-selection.json"
+    validate_payload("architecture-profile.schema.json", architecture_profile, "architecture profile")
+    validate_payload("skill-selection.schema.json", selection, "skill selection")
+    write_json(architecture_profile_path, architecture_profile)
+    write_json(selection_path, selection)
 
     output_root = resolve_output_path(args.output_root, root, root)
     project_root = root / ("" if selected is None or selected["dir"] == "." else selected["dir"])
@@ -743,14 +785,24 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             "root": str(root),
             "revision": context["revision"],
             "detected_stack": context["languages"],
-            "architecture": None,
-            "confidence": None,
+            "architecture": architecture_profile["architecture"],
+            "confidence": architecture_profile["confidence"],
             "snapshot_hash": context["snapshot_hash"],
             "context_hash": payload_hash(context),
             "context_file": str(run_dir / "project-context.json"),
             "scanner_version": SCANNER_VERSION,
         },
         "selected_skills": skills,
+        "intelligence": {
+            "architecture_profile_file": str(architecture_profile_path),
+            "architecture_profile_hash": payload_hash(architecture_profile),
+            "skill_selection_file": str(selection_path),
+            "skill_selection_hash": payload_hash(selection),
+            "selection_mode": selection_mode,
+            "architecture": architecture_profile["architecture"],
+            "confidence": architecture_profile["confidence"],
+            "unresolved_requirements": selection["unresolved_requirements"],
+        },
         "workflow": {
             "project_dir": str(project_root),
             "project_id": selected["id"] if selected else None,
@@ -768,7 +820,7 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
         "approval_required": True,
         "assumptions": [
             "One bounded repository scan is shared by all selected skills.",
-            "Project detection is heuristic and must be reviewed before generation.",
+            "Architecture and skill recommendations are evidence-based heuristics; review confidence and unresolved requirements before generation.",
             "The execute command writes local artifacts only; it never deploys, provisions or publishes.",
             "Existing project files are preserved unless execute is explicitly run with --overwrite.",
         ],
@@ -793,6 +845,11 @@ def create_plan(args: argparse.Namespace) -> dict[str, Any]:
             "goal": args.goal.strip(),
             "approval_required": True,
             "depends_on": dependencies[skill],
+            "architecture_profile": {
+                "file": str(architecture_profile_path),
+                "architecture": architecture_profile["architecture"],
+                "confidence": architecture_profile["confidence"],
+            },
         }
         if skill == "app-containerizer":
             handoff["project_root"] = str(project_root)
@@ -844,6 +901,48 @@ def _verify_run_fresh(
         raise OrchestratorError("Project root mismatch between execution plan and context.")
     if payload_hash(context) != plan["project"].get("context_hash"):
         raise OrchestratorError("Project context changed after planning. Create a fresh plan.")
+    intelligence = plan.get("intelligence")
+    if intelligence:
+        intelligence_artifacts = (
+            (
+                "architecture_profile_file",
+                "architecture_profile_hash",
+                "architecture-profile.json",
+                "architecture-profile.schema.json",
+                "architecture profile",
+            ),
+            (
+                "skill_selection_file",
+                "skill_selection_hash",
+                "skill-selection.json",
+                "skill-selection.schema.json",
+                "skill selection",
+            ),
+        )
+        loaded_intelligence: dict[str, dict[str, Any]] = {}
+        for path_key, hash_key, filename, schema_name, label in intelligence_artifacts:
+            expected_path = (run_dir / filename).resolve()
+            artifact_path = Path(intelligence.get(path_key, "")).resolve()
+            if artifact_path != expected_path or artifact_path.is_symlink() or not artifact_path.is_file():
+                raise OrchestratorError(f"Missing or unsafe {label} artifact. Create a fresh plan.")
+            artifact = read_json(artifact_path)
+            validate_payload(schema_name, artifact, label)
+            if payload_hash(artifact) != intelligence.get(hash_key):
+                raise OrchestratorError(f"{label.capitalize()} changed after planning. Create a fresh plan.")
+            loaded_intelligence[label] = artifact
+        profile = loaded_intelligence["architecture profile"]
+        selection = loaded_intelligence["skill selection"]
+        if profile.get("snapshot_hash") != plan["project"].get("snapshot_hash"):
+            raise OrchestratorError("Architecture profile does not match the planned project snapshot.")
+        if selection.get("project_snapshot_hash") != plan["project"].get("snapshot_hash"):
+            raise OrchestratorError("Skill selection does not match the planned project snapshot.")
+        if selection.get("selected_skills") != plan.get("selected_skills"):
+            raise OrchestratorError("Skill selection artifact does not match the execution plan.")
+        if (
+            profile.get("architecture") != plan["project"].get("architecture")
+            or profile.get("confidence") != plan["project"].get("confidence")
+        ):
+            raise OrchestratorError("Architecture profile does not match the execution plan.")
     root = Path(plan["project"]["root"]).resolve()
     if verify_project:
         cache_config = plan.get("workflow", {}).get("context_cache", {})
@@ -886,6 +985,14 @@ def _verify_run_fresh(
             raise OrchestratorError(f"Invalid or mismatched handoff for {skill}.")
         if handoff.get("snapshot_hash") != plan["project"]["snapshot_hash"]:
             raise OrchestratorError(f"Project snapshot mismatch in handoff for {skill}.")
+        if intelligence:
+            architecture_ref = handoff.get("architecture_profile", {})
+            if (
+                architecture_ref.get("file") != intelligence.get("architecture_profile_file")
+                or architecture_ref.get("architecture") != plan["project"].get("architecture")
+                or architecture_ref.get("confidence") != plan["project"].get("confidence")
+            ):
+                raise OrchestratorError(f"Architecture profile reference mismatch in handoff for {skill}.")
         if handoff.get("approval_required") is not True:
             raise OrchestratorError(f"Approval gate missing in handoff for {skill}.")
         if skill == "app-containerizer" and not isinstance(handoff.get("input"), dict):
@@ -1792,7 +1899,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan = subparsers.add_parser("plan", help="Scan once and create versioned context and skill handoffs.")
     plan.add_argument("--project", required=True)
     plan.add_argument("--goal", required=True)
-    plan.add_argument("--skills", required=True, help="Comma-separated skill IDs.")
+    plan.add_argument("--skills", required=True, help="Comma-separated skill IDs, or 'auto' to select from the goal and detected requirements.")
     plan.add_argument("--run-dir", required=True, help="New or empty directory for the plan and handoffs.")
     plan.add_argument("--project-dir", help="Explicit subproject path for containerizer/CI when the repository contains multiple apps.")
     plan.add_argument("--provider", choices=sorted(PROVIDERS))
@@ -1855,6 +1962,12 @@ def main() -> int:
                 "run_id": plan["run_id"],
                 "plan": str(Path(args.run_dir).resolve() / "execution-plan.json"),
                 "context": str(Path(args.run_dir).resolve() / "project-context.json"),
+                "architecture_profile": plan.get("intelligence", {}).get("architecture_profile_file"),
+                "skill_selection": plan.get("intelligence", {}).get("skill_selection_file"),
+                "selection_mode": plan.get("intelligence", {}).get("selection_mode", "explicit"),
+                "architecture": plan["project"].get("architecture"),
+                "confidence": plan["project"].get("confidence"),
+                "unresolved_requirements": plan.get("intelligence", {}).get("unresolved_requirements", []),
                 "handoffs": plan["handoffs"],
                 "selected_skills": plan["selected_skills"],
                 "approval_required": True,

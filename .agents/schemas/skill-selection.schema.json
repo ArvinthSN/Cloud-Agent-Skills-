@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/skill-selection.schema.json",
+  "title": "Cloud Agent Skills selection contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "mode", "goal", "requested_skills", "selected_skills", "recommendations", "blocked", "unresolved_requirements", "architecture", "architecture_confidence", "project_snapshot_hash"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "mode": {"enum": ["explicit", "auto"]},
+    "goal": {"type": "string", "minLength": 1},
+    "requested_skills": {"type": "array", "uniqueItems": true, "items": {"enum": ["app-containerizer", "cicd-pipeline-creator", "infra-creator"]}},
+    "selected_skills": {"type": "array", "uniqueItems": true, "items": {"enum": ["app-containerizer", "cicd-pipeline-creator", "infra-creator"]}},
+    "recommendations": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["skill", "ready", "reason", "missing_requirements"],
+        "properties": {
+          "skill": {"enum": ["app-containerizer", "cicd-pipeline-creator", "infra-creator"]},
+          "ready": {"type": "boolean"},
+          "reason": {"type": "string"},
+          "missing_requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+        }
+      }
+    },
+    "blocked": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["skill", "missing_requirements", "reason"],
+        "properties": {
+          "skill": {"type": "string", "minLength": 1},
+          "missing_requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "unresolved_requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "architecture": {"enum": ["monolith", "frontend_backend", "microservices", "multi_project", "unknown"]},
+    "architecture_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "project_snapshot_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  }
+}

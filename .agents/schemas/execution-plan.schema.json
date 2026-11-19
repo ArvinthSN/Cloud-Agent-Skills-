@@ -187,6 +187,9 @@
           "enum": [
             "github",
             "azure",
+            "gitlab",
+            "jenkins",
+            "circleci",
             null
           ]
         },
@@ -281,6 +284,65 @@
     "created_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "intelligence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture_profile_file",
+        "architecture_profile_hash",
+        "skill_selection_file",
+        "skill_selection_hash",
+        "selection_mode",
+        "architecture",
+        "confidence",
+        "unresolved_requirements"
+      ],
+      "properties": {
+        "architecture_profile_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skill_selection_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection_mode": {
+          "enum": [
+            "explicit",
+            "auto"
+          ]
+        },
+        "architecture": {
+          "enum": [
+            "monolith",
+            "frontend_backend",
+            "microservices",
+            "multi_project",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "unresolved_requirements": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "architecture_profile_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "skill_selection_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
     }
   }
 }
