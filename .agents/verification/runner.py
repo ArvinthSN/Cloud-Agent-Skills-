@@ -78,8 +78,11 @@ def _parse_json(text: str) -> Any:
 
 
 def _safe_project_root(plan: dict[str, Any]) -> Path:
-    root = Path(plan["workflow"]["project_dir"]).resolve()
-    if not root.is_dir() or root.is_symlink():
+    raw_root = Path(plan["workflow"]["project_dir"])
+    if raw_root.is_symlink():
+        raise ValueError(f"Planned project directory must not be a symlink: {raw_root}")
+    root = raw_root.resolve()
+    if not root.is_dir():
         raise ValueError(f"Planned project directory is missing or unsafe: {root}")
     return root
 
@@ -350,9 +353,9 @@ def _security_scans(root: Path, infra_dirs: list[Path], checks: list[dict[str, s
             status, detail = "NOT_RUN", "Gitleaks could not complete or timed out."
         else:
             findings = _parse_json(result.stdout)
-            count = len(findings) if isinstance(findings, list) else 0
-            status = "FAIL" if result.returncode != 0 or count else "PASS"
-            detail = f"Gitleaks completed; findings={count}; exit_code={result.returncode}. Secret values are not copied into this report."
+            count = len(findings) if isinstance(findings, list) else None
+            status = "FAIL" if result.returncode != 0 or (count or 0) else "PASS"
+            detail = f"Gitleaks completed; findings={count if count is not None else 'unknown'}; exit_code={result.returncode}. Secret values are not copied into this report."
         _check(checks, skill="security", category="secrets", name="gitleaks-secret-scan",
                status=status, tool="gitleaks", detail=detail)
 
