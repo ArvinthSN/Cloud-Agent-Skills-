@@ -116,7 +116,7 @@ def build_architecture_profile(context: dict[str, Any]) -> dict[str, Any]:
         confidence = 0.0
         uncertainties.append("Repository scan was truncated; architecture confidence is invalid.")
     if len(context.get("projects", [])) > 1:
-        uncertainties.append("Select an application with --project-dir before generating application-specific artifacts.")
+        uncertainties.append("Multiple application projects were detected; review service boundaries and select a project before application-specific generation.")
 
     return {
         "schema_version": PROFILE_SCHEMA_VERSION,
@@ -153,8 +153,19 @@ def _skill_requirements(
         elif selected is None and project_dir:
             missing.append("valid_project_dir")
         elif selected:
-            if skill == "app-containerizer" and selected.get("language") not in SUPPORTED_CONTAINER_LANGUAGES:
-                missing.append("supported_container_stack")
+            if skill == "app-containerizer":
+                language = selected.get("language")
+                package_manager = selected.get("package_manager")
+                if language not in SUPPORTED_CONTAINER_LANGUAGES:
+                    missing.append("supported_container_stack")
+                elif language == "node" and (
+                    package_manager != "npm" or selected.get("lockfile") != "package-lock.json"
+                ):
+                    missing.append("npm_package_lock")
+                elif language == "java" and package_manager != "maven":
+                    missing.append("maven_build")
+                elif language == "python" and package_manager not in {"pip", "poetry", "uv"}:
+                    missing.append("supported_python_package_manager")
             if skill == "cicd-pipeline-creator":
                 if selected.get("ci_lang") not in {"python", "node"}:
                     missing.append("supported_ci_stack")
