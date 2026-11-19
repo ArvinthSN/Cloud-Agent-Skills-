@@ -1763,7 +1763,7 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
                 affected = item["skill"] if item["skill"] in skill_results else None
                 targets = [affected] if affected else list(skill_results)
                 for target in targets:
-                    if skill_results[target]["status"] == "completed":
+                    if skill_results[target]["status"] not in {"failed", "blocked"}:
                         skill_results[target]["status"] = "failed"
                     skill_results[target]["risks"].append(
                         f"Verification failed ({item['tool']}): {item['name']}. {item['detail']}"
