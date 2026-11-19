@@ -24,7 +24,7 @@ Flask uses the detected module path and requires Gunicorn as a project runtime d
 
 ## Workflow
 1. Follow AGENTS.md and .agents/standards/.
-2. Scan the repository once with scripts/scan_repository.py. Reuse the scan unless the target or project revision changed.
+2. Scan the repository once with scripts/scan_repository.py. Reuse the scan unless the target or project revision changed. If `scan_truncated` is true, stop and narrow the scan scope; never generate from an incomplete scan.
 3. Analyze with scripts/analyze_application.py. Load only references relevant to the detected stack.
 4. Present stack, entry point, runtime, package manager, port, startup command, services and unknowns.
 5. Obtain approval before writing. Never overwrite Docker assets without explicit approval and --overwrite.
@@ -50,5 +50,7 @@ python scripts/generate_dockerfile.py --path ./app --plan plan.json --approve
 python scripts/generate_compose.py --path ./app --plan plan.json --services postgresql --approve
 python scripts/validate_container.py --path ./app
 ~~~
+
+When `scan_repository.py --output <path>` is used, the full scan is saved to that JSON artifact and stdout returns only a compact receipt. Omit `--output` when a downstream tool explicitly needs the full JSON on stdout.
 
 Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired.

@@ -99,6 +99,8 @@ The canonical context stores file paths, sizes, hashes and detected metadata onl
 - Project discovery is heuristic. Review stack, framework, runtime, service and architecture findings before approval.
 
 ## Outputs
+The `execute` and `resume` CLI commands print a compact JSON receipt (status, per-skill statuses, artifact/check counts and the report path). The complete evidence remains in `execution-report.json`; read that artifact only when detailed diagnostics are needed. `recover` prints a compact state receipt.
+
 The run directory contains:
 - project-context.json — canonical bounded scan and project fingerprint;
 - execution-plan.json — selected skills, assumptions, provider/platform and outputs;

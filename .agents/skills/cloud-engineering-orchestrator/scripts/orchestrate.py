@@ -1821,6 +1821,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def execution_receipt(report_path: Path, report: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact CLI receipt; keep full evidence in execution-report.json."""
+    check_counts = {
+        status: sum(1 for check in report.get("checks", []) if check.get("status") == status)
+        for status in ("PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN")
+    }
+    skill_statuses = {
+        name: result.get("status", "unknown")
+        for name, result in report.get("skill_reports", {}).items()
+    }
+    return {
+        "status": report.get("status", "unknown"),
+        "skill": report.get("skill", "cloud-engineering-orchestrator"),
+        "run_id": report.get("run_id"),
+        "report": str(report_path),
+        "transaction": report.get("transaction", {}).get("status"),
+        "skills": skill_statuses,
+        "artifact_count": len(report.get("artifacts", [])),
+        "checks": check_counts,
+        "risk_count": len(report.get("risks", [])),
+        "manual_action_count": len(report.get("manual_actions", [])),
+    }
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -1843,9 +1867,17 @@ def main() -> int:
             report = recover_run(args)
         else:
             report = execute_run(args)
-        print(json.dumps(report, indent=2))
         if args.command == "recover":
+            receipt = {
+                "status": report.get("status"),
+                "run_id": report.get("run_id"),
+                "transaction_phase": report.get("transaction", {}).get("phase"),
+                "state_file": str(state_path(Path(args.run_dir).resolve())),
+            }
+            print(json.dumps(receipt, separators=(",", ":")))
             return 0
+        report_path = Path(args.run_dir).resolve() / "execution-report.json"
+        print(json.dumps(execution_receipt(report_path, report), separators=(",", ":")))
         return 0 if report.get("status") == "completed" else 2 if report.get("status") == "partial" else 1
     except OrchestratorError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

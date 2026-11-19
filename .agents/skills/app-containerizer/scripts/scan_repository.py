@@ -166,10 +166,24 @@ def main() -> None:
     repo = Path(args.path)
     if not repo.is_dir():
         parser.error("--path must be an existing directory")
-    result = json.dumps(scan(repo), indent=2)
+    report = scan(repo)
+    result = json.dumps(report, indent=2)
     if args.output:
-        Path(args.output).write_text(result + "\n", encoding="utf-8")
-    print(result)
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(result + "\n", encoding="utf-8")
+        # Keep agent stdout small; the complete report remains available as an artifact.
+        print(json.dumps({
+            "status": "completed",
+            "report": str(output_path),
+            "project_type": report["project_type"],
+            "framework": report["framework"],
+            "file_count": report["file_count"],
+            "scan_truncated": report["scan_truncated"],
+        }, separators=(",", ":")))
+    else:
+        # Preserve machine-readable stdout when no artifact path is supplied.
+        print(result)
 
 
 if __name__ == "__main__":

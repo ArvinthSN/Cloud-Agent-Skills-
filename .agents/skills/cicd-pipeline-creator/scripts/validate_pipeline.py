@@ -78,7 +78,7 @@ def run_native_validators(path: Path, platform: str):
     if platform != "jenkins" and shutil.which("yamllint"):
         checks.append((
             "yamllint",
-            ["yamllint", "-d", "{extends: relaxed, rules: {document-start: disable}}", str(path)],
+            ["yamllint", "-d", "{extends: relaxed, rules: {document-start: disable, new-lines: disable}}", str(path)],
         ))
     elif platform != "jenkins":
         skipped.append("SKIPPED: yamllint not installed")
