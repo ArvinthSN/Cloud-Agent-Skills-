@@ -20,7 +20,8 @@
     "risks",
     "manual_actions",
     "started_at",
-    "finished_at"
+    "finished_at",
+    "verification"
   ],
   "properties": {
     "schema_version": {
@@ -159,6 +160,61 @@
     "finished_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "report",
+        "summary"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "completed",
+            "partial",
+            "failed"
+          ]
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "FAIL",
+            "NOT_RUN",
+            "PASS",
+            "SKIPPED",
+            "WARNING"
+          ],
+          "properties": {
+            "FAIL": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "NOT_RUN": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "PASS": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "SKIPPED": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "WARNING": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
