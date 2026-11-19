@@ -36,7 +36,7 @@ jobs:
         run: |
           python -c "import subprocess,sys; files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0'); bad=[p for p in files if '/__pycache__/' in p or p.endswith(('.pyc','.pyo'))]; print('\n'.join(bad)); sys.exit(bool(bad))"
       - name: Compile skill scripts
-        run: python -m compileall -q .agents/skills
+        run: python -m compileall -q .agents
       - name: Validate shared contracts
         run: pytest -q tests/harness
       - name: Test application containerizer
