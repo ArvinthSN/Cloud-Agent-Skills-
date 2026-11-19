@@ -1821,8 +1821,8 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
         else:
             overall = "partial"
 
-        if overall == "completed" and verification_report["status"] == "partial":
-            overall = "partial"
+        if verification_report["status"] == "failed":
+            overall = "failed"
 
         report = {
             "schema_version": SCHEMA_VERSION,
