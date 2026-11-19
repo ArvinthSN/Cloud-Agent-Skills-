@@ -14,6 +14,8 @@ def test_execution_schemas_are_valid_json_and_versioned():
         "skill-handoff.schema.json",
         "project-context.schema.json",
         "execution-state.schema.json",
+        "architecture-profile.schema.json",
+        "skill-selection.schema.json",
     ):
         schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
         assert schema["$schema"].endswith("/2020-12/schema")
