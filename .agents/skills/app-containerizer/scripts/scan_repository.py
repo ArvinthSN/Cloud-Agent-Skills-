@@ -171,7 +171,7 @@ def main() -> None:
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(result + "\\n", encoding="utf-8")
+        output_path.write_text(result + "\n", encoding="utf-8")
         # Keep agent stdout small; the complete report remains available as an artifact.
         print(json.dumps({
             "status": "completed",
