@@ -1,14 +1,24 @@
 # Token-efficient context policy
 
-Reduce irrelevant context without omitting facts required for correctness or safety.
+Reduce irrelevant context without omitting facts required for correctness or safety. This policy is mandatory for every specialist and the orchestrator.
 
-## Progressive loading
+## Progressive disclosure
 
-1. Load the selected skill overview.
-2. Inspect project manifests, entry points and configuration relevant to the task.
-3. Load only the reference sections required.
-4. Reuse validated structured facts across skill handoffs.
-5. Load deeper source files only when evidence points to them.
+1. Read only the selected skill's `SKILL.md`.
+2. Inspect the smallest authoritative inputs first: manifests, lockfiles, entry points, deployment configuration and explicitly selected files.
+3. Load only the reference section needed for the detected stack, provider or platform. Never preload every reference.
+4. Reuse validated project context and handoffs. Do not repeat discovery in downstream skills unless the context is stale, incomplete, invalid or the user changes scope.
+5. Read source files only to resolve a specific uncertainty. Prefer a bounded excerpt with a path and line range over a whole-file dump.
+
+## Context budget
+
+- Keep the initial project summary to: stack/framework, runtime, package manager, entry point, build/test/start commands, database/services, target platform/provider, confidence and unknowns.
+- Keep lists to the smallest relevant set. Default to at most 20 paths/findings in human-facing output; include an omitted count when truncated.
+- Never include source code, lockfile contents, full dependency trees, full logs or environment values in a handoff.
+- Use structured JSON handoffs as the canonical machine context. Pass paths, hashes and concise detected facts, not copied source text.
+- Do not restate the same project facts in every skill response.
+- When a command writes a report to a file, return a compact receipt (status, report path and key counts) rather than printing the entire report again.
+- Keep normal completion output to: outcome, artifact paths, validation summary, warnings and manual actions. Put detailed diagnostics in report/log files and print only the relevant failure excerpt.
 
 ## Scan boundaries
 
@@ -18,29 +28,20 @@ Exclude by default:
 - caches and bytecode (__pycache__, .pytest_cache, .mypy_cache);
 - build output (dist, build, target, coverage output);
 - Terraform state, plans and .terraform;
-- binaries and files above a configurable size threshold.
+- binaries, secrets files and files above a configurable size threshold.
 
-Never follow symlinks outside the selected repository root unless explicitly required.
+Never follow symlinks outside the selected repository root. Never read secret values. Environment variable names may be reported only when useful; redact values.
 
-## Bounded outputs
+## Determinism and caching
 
-- Prefer summaries and file references over full contents.
-- Keep file samples, diagnostics and evidence excerpts capped.
-- Deduplicate repeated findings.
-- Include omitted item counts when truncated.
-- Do not repeat unchanged context in every skill response.
-- Store detailed logs as artifacts; return a concise summary and path.
+- Prefer deterministic scripts for scanning, rendering, schema validation and static checks. Use the LLM for interpretation, ambiguity resolution and explaining trade-offs—not for repeating deterministic work.
+- A cached project summary is reusable only when it identifies the canonical repository root, content/revision fingerprint, scanner version, schema version and relevant project paths.
+- Re-scan when the project fingerprint, selected subproject, scanner version or relevant manifests change. Do not treat an unversioned summary as authoritative.
+- Use one scan per project run. A downstream skill must consume the validated handoff rather than rescan.
 
-## Cache validity
+## Safe output discipline
 
-A cached project summary is reusable only when it identifies:
-- repository root;
-- scan timestamp or revision;
-- scanner/schema version;
-- relevant project paths.
-
-Re-scan when repository revision or relevant manifests change. Do not treat an unversioned summary as authoritative.
-
-## Safety over savings
-
-Never omit approval gates, secret checks, error details needed to fix a failure, or evidence needed to justify a recommendation merely to save tokens.
+- Do not reduce or omit approval gates, secret checks, security controls, validation evidence or failure details needed to resolve a blocker.
+- Never claim a check passed if it was skipped or unavailable. Use PASS, FAIL, WARNING, SKIPPED or NOT_RUN.
+- Do not suppress uncertainty to make a response shorter. Record unknowns and ask only for information that blocks safe progress.
+- Prefer concise explanations with links/paths to generated artifacts; expand only when the user asks or a failure needs diagnosis.
