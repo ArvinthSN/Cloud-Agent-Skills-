@@ -592,3 +592,45 @@ def test_execute_rejects_tampered_architecture_profile(tmp_path):
     with pytest.raises(orchestrator.OrchestratorError, match="Architecture profile changed after planning"):
         orchestrator.execute_run(args)
     assert not (project / "Dockerfile").exists()
+
+
+
+def test_verification_failure_rolls_back_generated_artifacts(tmp_path, monkeypatch):
+    project = make_node_project(tmp_path / "verification-failure-app")
+    run_dir = tmp_path / "verification-failure-run"
+    plan_for(project, run_dir)
+
+    def fail_verification(plan, run_dir, *, docker_build=False, terraform_plan=False):
+        return {
+            "schema_version": "1.0",
+            "run_id": plan["run_id"],
+            "project_root": str(project),
+            "status": "failed",
+            "requested_verifications": {
+                "docker_build": docker_build,
+                "terraform_plan": terraform_plan,
+            },
+            "summary": {"FAIL": 1, "NOT_RUN": 0, "PASS": 0, "SKIPPED": 0, "WARNING": 0},
+            "checks": [{
+                "skill": "app-containerizer",
+                "category": "security",
+                "name": "test-security-gate",
+                "status": "FAIL",
+                "tool": "test-scanner",
+                "detail": "Synthetic failure used to test transaction rollback.",
+            }],
+            "generated_at": "2026-11-19T12:00:00+00:00",
+        }
+
+    monkeypatch.setattr(orchestrator, "verify_artifacts", fail_verification)
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+    report = orchestrator.execute_run(args)
+
+    assert report["status"] == "failed"
+    assert report["verification"]["status"] == "failed"
+    assert report["transaction"]["status"] == "rolled_back"
+    assert not (project / "Dockerfile").exists()
+    assert not (project / ".github" / "workflows" / "pipeline.yml").exists()
+    assert (run_dir / "verification-report.json").is_file()
