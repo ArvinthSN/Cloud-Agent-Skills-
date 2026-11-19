@@ -99,3 +99,12 @@ The CI workflow runs the suite on Python 3.11 and 3.12 across Ubuntu, Windows an
 - GitLab CI Lint, CircleCI CLI, Jenkins controller validation and Azure DevOps runs require provider-specific environments.
 - Terraform fmt/init/validate is not a security audit, deployment or proof that cloud quotas, IAM, policies and networking are correct.
 - Actual production readiness requires provider-native integration tests, review of image digests/action pins, security policy checks, observability and a controlled cloud deployment rehearsal.
+
+## Application intelligence and automatic skill selection
+
+The orchestrator includes a deterministic Phase 1 intelligence layer. It creates an evidence-backed architecture profile, resolves prerequisites and can select skills from the requested goal.
+
+Use `--skills auto` to enable goal-driven selection. Supply `--platform` when requesting CI/CD generation and `--provider` when requesting infrastructure generation; the planner records missing requirements instead of guessing. Existing comma-separated explicit skill selection remains supported.
+
+Each plan includes `architecture-profile.json` and `skill-selection.json` alongside the execution plan and versioned specialist handoffs. Architecture confidence is an evidence-based heuristic and must be reviewed before approving generation.
+
