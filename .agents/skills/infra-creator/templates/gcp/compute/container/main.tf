@@ -20,7 +20,7 @@ resource "google_cloud_run_v2_service" "this" {
   template {
     service_account = google_service_account.run.email
     containers {
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.this.repository_id}/app:latest"
+      image = var.container_image
       ports {
         container_port = var.container_port
       }
@@ -45,6 +45,7 @@ resource "google_cloud_run_v2_service" "this" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public" {
+  count    = var.allow_unauthenticated ? 1 : 0
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.this.name

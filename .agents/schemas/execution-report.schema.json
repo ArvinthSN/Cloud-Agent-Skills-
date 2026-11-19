@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/execution-report.schema.json",
+  "title": "Cloud Agent Skills execution report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "skill",
+    "run_id",
+    "project_revision",
+    "overwrite_approved",
+    "detected",
+    "transaction",
+    "artifacts",
+    "checks",
+    "skill_reports",
+    "assumptions",
+    "risks",
+    "manual_actions",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "blocked",
+        "failed",
+        "partial",
+        "not_started"
+      ]
+    },
+    "skill": {
+      "type": "string",
+      "const": "cloud-engineering-orchestrator"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "project_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "overwrite_approved": {
+      "type": "boolean"
+    },
+    "detected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "languages",
+        "frameworks",
+        "databases",
+        "projects",
+        "snapshot_hash"
+      ],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "frameworks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "databases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "rolled_back_paths"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "committed",
+            "rolled_back"
+          ]
+        },
+        "rolled_back_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "skill_reports": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/skillReport"
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "manual_actions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "type",
+        "action",
+        "purpose"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "enum": [
+            "created",
+            "updated",
+            "preserved"
+          ]
+        },
+        "purpose": {
+          "type": "string"
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "status",
+        "detail"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "WARNING",
+            "SKIPPED",
+            "NOT_RUN"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "skillReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "artifacts",
+        "checks",
+        "assumptions",
+        "risks",
+        "manual_actions"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "completed",
+            "blocked",
+            "failed",
+            "partial",
+            "rolled_back"
+          ]
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "manual_actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rolled_back": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

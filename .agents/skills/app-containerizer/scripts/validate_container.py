@@ -17,7 +17,7 @@ def validate(repo,build=False):
         add("pinned base tag","WARNING" if ":latest" in t else "PASS","Avoid latest tags.")
     if build:
         docker=shutil.which("docker")
-        if not docker: add("Docker build","NOT_AVAILABLE","Docker CLI not found; image was not built.")
+        if not docker: add("Docker build","NOT_RUN","Docker CLI not found; image was not built.")
         elif not df.exists(): add("Docker build","SKIPPED","Dockerfile missing.")
         else:
             p=subprocess.run([docker,"build","-t","app-containerizer:local",str(repo)],capture_output=True,text=True)

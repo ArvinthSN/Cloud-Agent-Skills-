@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/execution-plan.schema.json",
+  "title": "Cloud Agent Skills execution plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "request",
+    "project",
+    "selected_skills",
+    "dependencies",
+    "execution_order",
+    "workflow",
+    "approval_required",
+    "assumptions",
+    "blocked_on",
+    "created_at",
+    "handoffs",
+    "handoff_hashes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goal",
+        "constraints"
+      ],
+      "properties": {
+        "goal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "revision",
+        "detected_stack",
+        "architecture",
+        "confidence",
+        "snapshot_hash",
+        "context_file",
+        "scanner_version",
+        "context_hash"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detected_stack": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "architecture": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "context_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scanner_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "selected_skills": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "app-containerizer",
+          "cicd-pipeline-creator",
+          "infra-creator"
+        ]
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "enum": [
+            "app-containerizer",
+            "cicd-pipeline-creator",
+            "infra-creator"
+          ]
+        }
+      }
+    },
+    "execution_order": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "app-containerizer",
+          "cicd-pipeline-creator",
+          "infra-creator"
+        ]
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_dir",
+        "project_id",
+        "provider",
+        "platform",
+        "compose_services",
+        "output_root",
+        "ci_output",
+        "infra_output",
+        "overwrite_approved",
+        "context_cache"
+      ],
+      "properties": {
+        "project_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "enum": [
+            "aws",
+            "azure",
+            "gcp",
+            null
+          ]
+        },
+        "platform": {
+          "enum": [
+            "github",
+            "azure",
+            null
+          ]
+        },
+        "compose_services": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "postgresql",
+              "mysql",
+              "redis"
+            ]
+          }
+        },
+        "output_root": {
+          "type": "string"
+        },
+        "ci_output": {
+          "type": "string"
+        },
+        "infra_output": {
+          "type": "string"
+        },
+        "overwrite_approved": {
+          "type": "boolean",
+          "const": false
+        },
+        "context_cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "status",
+            "directory",
+            "key"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "disabled",
+                "miss",
+                "hit",
+                "unavailable"
+              ]
+            },
+            "directory": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      }
+    },
+    "approval_required": {
+      "type": "boolean",
+      "const": true
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "handoffs": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "handoff_hashes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

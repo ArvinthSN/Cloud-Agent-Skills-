@@ -1,0 +1,49 @@
+name: Repository quality
+
+on:
+  push:
+    branches: [main, "review/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-quality:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest pyyaml jsonschema
+      - name: Reject committed Python bytecode
+        run: |
+          python -c "import subprocess,sys; files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0'); bad=[p for p in files if '/__pycache__/' in p or p.endswith(('.pyc','.pyo'))]; print('\n'.join(bad)); sys.exit(bool(bad))"
+      - name: Compile skill scripts
+        run: python -m compileall -q .agents/skills
+      - name: Validate shared contracts
+        run: pytest -q tests/harness
+      - name: Test application containerizer
+        run: pytest -q .agents/skills/app-containerizer/tests
+      - name: Test infrastructure creator
+        run: pytest -q .agents/skills/infra-creator/tests
+      - name: Test CI/CD renderer
+        run: pytest -q .agents/skills/cicd-pipeline-creator/tests
+      - name: Test CI/CD examples
+        run: python .agents/skills/cicd-pipeline-creator/scripts/test_examples.py

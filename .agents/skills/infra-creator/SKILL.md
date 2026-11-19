@@ -1,81 +1,52 @@
 ---
 name: infra-creator
-description: Generate production-ready Terraform IaC for AWS, Azure, or GCP from application repositories. Use when the user asks to create infrastructure, Terraform configs, cloud resources for an app, analyze a repo for infra needs, or run infra-creator. Supports monolithic, microservices, serverless, and event-driven architectures across three clouds.
+description: Analyze an application and produce guarded, container-focused Terraform plans and modules for AWS, Azure or GCP.
 ---
 
-# Infra-Creator Skill (Multi-Cloud)
+# Infra Creator
 
-Generate customized, production-oriented Terraform projects by analyzing application repositories. Supports **AWS**, **Azure**, and **GCP**.
+## Purpose
+Generate reviewable Terraform from evidence in an application repository.
 
-## When to Use
+## Inputs and outputs
+- Input: application path, cloud provider (AWS, Azure or GCP), project name and optional region.
+- Output: plan report, Terraform files and usage README.
+- Current compute templates are container-focused. Serverless and VM generation are not implemented.
 
-- User provides a repository path and asks for Terraform / cloud infrastructure
-- User specifies a target cloud (AWS, Azure, GCP) or asks for multi-cloud options
-- User says "generate infra", "create Terraform for this app", "infra-creator", or similar
+## Secure defaults and required inputs
 
-Do **not** use for pure application code generation or CI/CD pipelines.
+- Every generated compute module requires `container_image` to be an immutable OCI digest reference (`repository@sha256:<64 hex characters>`). Build and push the image separately before provisioning.
+- AWS ECR enforces immutable tags. The public ALB redirects HTTP to HTTPS and requires an ACM certificate ARN in the selected AWS region.
+- Azure Container Registry admin access is disabled. The Container App pulls through a user-assigned managed identity with AcrPull. Azure PostgreSQL uses a delegated subnet, private DNS and disabled public network access.
+- GCP Cloud Run is authenticated by default. Unauthenticated invocation is created only when `allow_unauthenticated=true` is explicitly approved.
+- Database passwords remain sensitive inputs and must be supplied through a protected environment or secret manager, not committed tfvars.
+- Shared/team use requires a reviewed remote-state backend with state locking; the generated backend snippets are examples and are not enabled automatically.
 
-## Supported Providers
+## Workflow
+1. Follow AGENTS.md and .agents/standards/.
+2. Scan once with scripts/scan_repository.py and classify with scripts/analyze_architecture.py. Reuse valid reports for the same project revision.
+3. Load only the selected architecture pattern, provider mapping and security references.
+4. Build the Terraform plan with scripts/generate_terraform.py --plan-only.
+5. Explain each resource, module dependency, cost-relevant choice, assumption and unknown.
+6. Obtain explicit approval before writing. Generation requires --approve; existing non-empty output requires separate --overwrite approval.
+7. Generate only capabilities supported by the selected provider templates. Stop clearly for serverless/VM plans and unsupported dependency combinations.
+8. Run scripts/validate_terraform.py. It first applies provider-aware static security policies, then validates an isolated copy with Terraform when installed; it never applies infrastructure. Missing Terraform is NOT_RUN.
+9. Report artifacts and check statuses, including Terraform NOT_RUN when the CLI is unavailable.
 
-| Provider | Status | Primary compute | Primary database |
-|----------|--------|-----------------|------------------|
-| AWS | Full | ECS Fargate | RDS |
-| Azure | Full | Container Apps / AKS-ready | Azure Database for PostgreSQL |
-| GCP | Full | Cloud Run | Cloud SQL |
+## Safety
+- Never run terraform apply or destroy.
+- Never provision cloud resources, change cloud accounts or push to GitHub.
+- Never hardcode credentials or secret values. Use secret managers or environment variables.
+- Do not expose databases publicly by default.
+- Preserve existing output unless explicit overwrite approval is given.
+- A successful terraform validate is not proof that a cloud deployment will succeed.
+- State provider-specific limitations and manual prerequisites.
 
-## Execution Workflow (Strict Order)
-
-1. Accept repository path and target provider (`aws` | `azure` | `gcp`). Default to `aws` if unspecified.
-2. Run `scripts/scan_repository.py` → structured analysis report.
-3. Run `scripts/analyze_architecture.py` → architecture classification + confidence + evidence.
-4. Load matching file(s) from `architecture-patterns/`.
-5. Identify infrastructure requirements (only what the app actually needs).
-6. Map requirements → cloud services using `references/*-service-mapping.md`.
-7. Select reusable modules from `templates/<provider>/`.
-8. **Present a clear infrastructure plan** (provider, resources, why needed).
-9. Wait for explicit user approval of the plan.
-10. Run `scripts/generate_terraform.py --provider <provider>` → write Terraform into `<repo>/infra/`.
-11. Run `scripts/validate_terraform.py` on the generated project.
-12. Fix obvious generation issues if validation fails.
-13. Generate/update `infra/README.md` with usage instructions.
-14. Present final output location and exact Terraform CLI commands.
-
-Never run `terraform apply` or `terraform destroy`. Never push to GitHub. Never hardcode credentials or secrets.
-
-## Key Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/scan_repository.py` | Language, framework, Docker, DB, env-var, and structure detection (cloud-agnostic) |
-| `scripts/analyze_architecture.py` | Architecture classification with evidence and confidence |
-| `scripts/generate_terraform.py` | Requirement → provider modules → HCL generation (`--provider aws|azure|gcp`) |
-| `scripts/validate_terraform.py` | `terraform fmt`, `init -backend=false`, `validate` |
-
-## Architecture Detection Rules
-
-- Prefer evidence over folder count. Multiple folders alone ≠ microservices.
-- Use `architecture-patterns/*.md` as the knowledge base.
-- If confidence is low, report uncertainty and ask the user for clarification.
-- Hybrid is valid when evidence supports it.
-
-## Terraform Generation Rules
-
-- Generate only justified resources for the chosen provider.
-- Copy and parameterize modules from `templates/<provider>/{networking,compute,database}/`.
-- Always produce: `main.tf`, `providers.tf`, `versions.tf`, `variables.tf`, `outputs.tf`, `terraform.tfvars.example`, environment dirs, and `README.md`.
-- Follow `references/terraform-standards.md` and `references/security-guidelines.md`.
-- Prefer private networking, least-privilege identity, encryption, and remote state recommendations.
-- Never emit empty placeholder resources or fake HCL.
-
-## Security Non-Negotiables
-
-- No hardcoded cloud credentials.
-- No publicly exposed databases.
-- Least-privilege identity (IAM / RBAC / service accounts).
-- Encrypt data at rest and in transit where applicable.
-- Recommend remote state for team environments.
-- Never commit state files, secrets, or sensitive tfvars.
-
-## Manual Invocation Only
-
-This skill is invoked by the user. It does not run continuously and does not auto-deploy.
+## CLI
+~~~bash
+python scripts/scan_repository.py ./app --json -o /tmp/scan.json
+python scripts/analyze_architecture.py /tmp/scan.json -o /tmp/arch.json
+python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --plan-only
+python scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --approve
+python scripts/validate_terraform.py ./app/infra --json
+~~~

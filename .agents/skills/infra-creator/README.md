@@ -1,77 +1,82 @@
-# infra-creator (Multi-Cloud)
+# Infra Creator
 
-Generate production-oriented Terraform IaC for **AWS**, **Azure**, and **GCP** from application repositories.
+Create reviewable, container-focused Terraform plans and modules for AWS, Azure and GCP.
 
-## Providers
+## Current support
 
-| Provider | Compute | Database | Registry |
-|----------|---------|----------|----------|
-| AWS | ECS Fargate + ALB | RDS | ECR |
-| Azure | Container Apps | PostgreSQL Flexible Server | ACR |
-| GCP | Cloud Run | Cloud SQL | Artifact Registry |
+| Provider | Compute template | Database template | Notes |
+|---|---|---|---|
+| AWS | ECS Fargate | RDS | Networking required; database security group comes from compute module |
+| Azure | Container Apps | PostgreSQL Flexible Server | Networking module required |
+| GCP | Cloud Run | Cloud SQL | Networking module required |
 
-## Quick Start
+Serverless and VM plans are detected but generation stops because matching compute modules are not implemented. Do not treat a plan as deployable infrastructure until Terraform validation and provider review succeed.
 
-```bash
-# Scan
-python scripts/scan_repository.py /path/to/app --json -o /tmp/scan.json
+## Quick start
 
-# Analyze architecture
-python scripts/analyze_architecture.py /tmp/scan.json -o /tmp/arch.json
+Run from the repository root, adjusting paths and provider as needed:
 
-# Plan (no files written) — choose provider
-python scripts/generate_terraform.py \
-  --scan /tmp/scan.json --arch /tmp/arch.json \
-  --provider aws \          # or azure | gcp
-  --output /path/to/app/infra \
-  --project-name myapp \
-  --plan-only
+~~~bash
+python .agents/skills/infra-creator/scripts/scan_repository.py ./app --json -o /tmp/scan.json
+python .agents/skills/infra-creator/scripts/analyze_architecture.py /tmp/scan.json -o /tmp/arch.json
 
-# Generate after approval
-python scripts/generate_terraform.py \
-  --scan /tmp/scan.json --arch /tmp/arch.json \
-  --provider aws \
-  --output /path/to/app/infra \
-  --project-name myapp
+# Inspect the plan; this does not write infrastructure.
+python .agents/skills/infra-creator/scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --project-name myapp --plan-only
 
-# Validate
-python scripts/validate_terraform.py /path/to/app/infra
-```
+# After approving the plan:
+python .agents/skills/infra-creator/scripts/generate_terraform.py --scan /tmp/scan.json --arch /tmp/arch.json --provider aws --output ./app/infra --project-name myapp --approve
+
+# Validate locally; Terraform CLI is required.
+python .agents/skills/infra-creator/scripts/validate_terraform.py ./app/infra --json
+~~~
+
+Use --overwrite only after reviewing and explicitly approving replacement of a non-empty output directory. Generation requires --approve.
+
+## Immutable images and provider security
+
+Every generated compute module requires `container_image` in immutable OCI digest form, such as `registry.example.com/app@sha256:<64-hex-digest>`. Build and push the image separately before running Terraform. The generator does not build or publish images.
+
+- **AWS:** ECR tags are immutable. Set `certificate_arn` to an ACM certificate in the ALB region. HTTP redirects to HTTPS.
+- **Azure:** ACR admin credentials are disabled. Container Apps use a user-assigned managed identity with AcrPull. PostgreSQL uses a delegated subnet, private DNS zone and disabled public networking.
+- **GCP:** Cloud Run requires authentication by default. Public unauthenticated access is an explicit opt-in via `allow_unauthenticated = true`.
+
+Generated examples leave image digests and certificate values as commented placeholders. Supply valid values through reviewed tfvars or protected pipeline variables; never commit secrets.
+
+## Database credentials
+
+The generated db_password variable is required and marked sensitive. Supply it through a secret manager or a protected environment variable such as TF_VAR_db_password. Never write the password into committed tfvars, source code, pipeline YAML or logs.
 
 ## Layout
 
-```
+~~~text
 infra-creator/
 ├── SKILL.md
-├── scripts/           # scan, analyze, generate, validate
+├── scripts/
 ├── architecture-patterns/
-├── references/        # per-cloud service mappings + standards
+├── references/
 ├── templates/
 │   ├── aws/
 │   ├── azure/
 │   └── gcp/
 ├── examples/
 └── tests/
-```
+~~~
 
-## Principles
+## Static security policies
 
-- Evidence-based architecture detection
-- Only justified resources
-- Human approval before generation
-- No auto-apply, no credential hardcoding
-- Private networking and encrypted databases by default
+The validator checks for mutable `:latest` image references, mutable ECR tags, Azure registry admin credentials, public Azure PostgreSQL, unconditional GCP `allUsers` access, missing AWS ALB HTTPS redirect/certificate controls and missing immutable image-digest input validation. These policies run without cloud credentials or Terraform CLI.
 
-## Testing
+## Safety and validation
 
-```bash
-pytest tests/ -v
-```
+- No implicit terraform apply or terraform destroy.
+- No cloud credentials or secrets in generated files.
+- Existing output is preserved unless overwrite is explicitly approved.
+- Terraform validation runs against an isolated temporary copy and does not alter generated output.
+- If the Terraform CLI is missing, validation fails as NOT_RUN; it is never reported as PASS.
+- terraform validate does not prove cloud credentials, quotas, policies or deployment will succeed.
 
-## Limitations (v1)
+## Tests
 
-- Container-focused compute modules (ECS / Container Apps / Cloud Run)
-- Serverless detection exists; dedicated Lambda/Functions modules can be extended later
-- Terraform CLI required for validation (not for generation)
-- Does not run `terraform apply` or push to GitHub
-```
+~~~bash
+pytest -q .agents/skills/infra-creator/tests
+~~~

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shutil
 import sys
 import textwrap
@@ -98,10 +99,16 @@ def build_plan(scan: dict[str, Any], arch: dict[str, Any], provider: str) -> Inf
     return plan
 
 
-def _copy_module(src: Path, dest: Path) -> None:
+def _copy_module(src: Path, dest: Path, *, overwrite: bool = False) -> None:
+    """Copy a module without deleting user data unless overwrite is explicit."""
     if not src.is_dir():
         raise FileNotFoundError(f"Template module not found: {src}")
     if dest.exists():
+        if not overwrite:
+            raise FileExistsError(
+                f"Module directory already exists: {dest}. "
+                "Choose a new output directory or explicitly enable overwrite."
+            )
         shutil.rmtree(dest)
     shutil.copytree(src, dest)
 
@@ -198,7 +205,14 @@ def _versions_block(provider: str, project_name: str, region: str) -> str:
         """
 
 
-def _variables_block(provider: str, project_name: str, region: str) -> str:
+def _variables_block(
+    provider: str,
+    project_name: str,
+    region: str,
+    *,
+    needs_database: bool = True,
+    needs_compute: bool = True,
+) -> str:
     common = f"""
         variable "project_name" {{
           description = "Name of the project used for resource naming"
@@ -212,8 +226,34 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           default     = "dev"
         }}
         """
+    if needs_compute:
+        common += """
+        variable "container_image" {
+          description = "Immutable OCI image reference using repository@sha256:<64 hex characters>"
+          type        = string
+          validation {
+            condition     = can(regex("@sha256:[0-9a-f]{64}$", var.container_image))
+            error_message = "container_image must be an immutable OCI SHA-256 digest reference."
+          }
+        }
+        """
+
+    database = """
+        variable "db_username" {
+          type      = string
+          default   = "appadmin"
+          sensitive = true
+        }
+
+        variable "db_password" {
+          description = "Database password supplied through TF_VAR_db_password or an approved secret workflow"
+          type        = string
+          sensitive   = true
+        }
+        """ if needs_database else ""
+
     if provider == "aws":
-        return common + f"""
+        provider_vars = f"""
         variable "aws_region" {{
           description = "AWS region"
           type        = string
@@ -230,26 +270,23 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
+        """
+        if needs_compute:
+            provider_vars += """
+        variable "certificate_arn" {
+          description = "ACM certificate ARN for the HTTPS application load balancer listener"
+          type        = string
+        }
 
-        variable "desired_count" {{
+        variable "desired_count" {
           type    = number
           default = 2
-        }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          type      = string
-          sensitive = true
-          default   = ""
-        }}
+        }
         """
+        return common + provider_vars + database
+
     if provider == "azure":
-        return common + f"""
+        provider_vars = f"""
         variable "location" {{
           description = "Azure region"
           type        = string
@@ -265,21 +302,10 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          type      = string
-          sensitive = true
-          default   = ""
-        }}
         """
-    # gcp
-    return common + f"""
+        return common + provider_vars + database
+
+    provider_vars = f"""
         variable "project_id" {{
           description = "GCP project ID"
           type        = string
@@ -300,19 +326,17 @@ def _variables_block(provider: str, project_name: str, region: str) -> str:
           type    = number
           default = 8000
         }}
-
-        variable "db_username" {{
-          type      = string
-          default   = "appadmin"
-          sensitive = true
-        }}
-
-        variable "db_password" {{
-          type      = string
-          sensitive = true
-          default   = ""
-        }}
         """
+    if needs_compute:
+        provider_vars += """
+        variable "allow_unauthenticated" {
+          description = "Explicitly allow unauthenticated Cloud Run invocation"
+          type        = bool
+          default     = false
+        }
+        """
+    return common + provider_vars + database
+
 
 
 def generate_project(
@@ -320,30 +344,60 @@ def generate_project(
     plan: InfraPlan,
     project_name: str = "app",
     region: str | None = None,
+    *,
+    overwrite: bool = False,
 ) -> None:
     provider = plan.provider
     if provider not in SUPPORTED_PROVIDERS:
         raise ValueError(f"Unsupported provider: {provider}")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", project_name):
+        raise ValueError("project_name must start with a lowercase letter and contain only lowercase letters, digits or hyphens (max 31 chars).")
+    if plan.needs_database and plan.db_engine not in {"postgres", "mysql"}:
+        raise ValueError(f"Unsupported database engine: {plan.db_engine}")
 
     defaults = {"aws": "us-east-1", "azure": "eastus", "gcp": "us-central1"}
     region = region or defaults[provider]
+    if not re.fullmatch(r"[A-Za-z0-9-]{2,40}", region):
+        raise ValueError(f"Invalid region value: {region}")
 
     output_dir = output_dir.resolve()
+    if plan.compute_type == "serverless":
+        raise ValueError(
+            "Serverless generation is not implemented yet. "
+            "The current templates are container-focused; do not generate a container module for a serverless plan."
+        )
+    if plan.needs_compute and not plan.needs_network:
+        raise ValueError(
+            "The selected compute templates require networking, but the plan disables networking. "
+            "Revise the plan or select a supported network-attached architecture."
+        )
+    if plan.needs_database and not plan.needs_network:
+        raise ValueError("The selected database templates require a networking module.")
+    if provider == "aws" and plan.needs_database and not plan.needs_compute:
+        raise ValueError("The AWS database template requires the compute module security group.")
+    if output_dir.exists():
+        existing = [p.name for p in output_dir.iterdir()]
+        if existing and not overwrite:
+            raise FileExistsError(
+                f"Output directory is not empty: {output_dir}. "
+                "Choose a new directory or pass --overwrite after reviewing existing files."
+            )
+    output_dir.mkdir(parents=True, exist_ok=True)
     modules_dir = output_dir / "modules"
     modules_dir.mkdir(parents=True, exist_ok=True)
     tmpl = TEMPLATES / provider
 
     if plan.needs_network:
-        _copy_module(tmpl / "networking" / "network", modules_dir / "networking")
+        _copy_module(tmpl / "networking" / "network", modules_dir / "networking", overwrite=overwrite)
     if plan.needs_compute:
-        _copy_module(tmpl / "compute" / "container", modules_dir / "compute")
+        _copy_module(tmpl / "compute" / "container", modules_dir / "compute", overwrite=overwrite)
     if plan.needs_database:
-        _copy_module(tmpl / "database" / "sql", modules_dir / "database")
+        _copy_module(tmpl / "database" / "sql", modules_dir / "database", overwrite=overwrite)
 
     _write(output_dir / "versions.tf", _versions_block(provider, project_name, region))
     region_var = "aws_region" if provider == "aws" else ("location" if provider == "azure" else "region")
     _write(output_dir / "providers.tf", _provider_block(provider, region_var))
-    _write(output_dir / "variables.tf", _variables_block(provider, project_name, region))
+    _write(output_dir / "variables.tf", _variables_block(provider, project_name, region, needs_database=plan.needs_database, needs_compute=plan.needs_compute))
 
     # main.tf
     parts: list[str] = [
@@ -378,6 +432,8 @@ def generate_project(
                   public_subnet_ids  = module.networking.public_subnet_ids
                   container_port     = var.container_port
                   desired_count      = var.desired_count
+                  container_image    = var.container_image
+                  certificate_arn    = var.certificate_arn
                 }
                 """
             )
@@ -420,6 +476,7 @@ def generate_project(
                   environment    = var.environment
                   subnet_id      = module.networking.app_subnet_id
                   container_port = var.container_port
+                  container_image = var.container_image
                 }
                 """
             )
@@ -431,9 +488,10 @@ def generate_project(
                   name_prefix = local.name_prefix
                   location    = var.location
                   environment = var.environment
-                  subnet_id   = module.networking.data_subnet_id
-                  db_engine   = "{plan.db_engine}"
-                  db_username = var.db_username
+                  subnet_id          = module.networking.data_subnet_id
+                  private_dns_zone_id = module.networking.postgres_private_dns_zone_id
+                  db_engine           = "{plan.db_engine}"
+                  db_username         = var.db_username
                   db_password = var.db_password
                 }}
                 """
@@ -462,8 +520,10 @@ def generate_project(
                   region         = var.region
                   environment    = var.environment
                   network_id     = module.networking.network_id
-                  subnet_id      = module.networking.subnet_id
-                  container_port = var.container_port
+                  subnet_id             = module.networking.subnet_id
+                  container_port        = var.container_port
+                  container_image       = var.container_image
+                  allow_unauthenticated = var.allow_unauthenticated
                 }
                 """
             )
@@ -533,39 +593,51 @@ def generate_project(
         )
     _write(output_dir / "outputs.tf", "\n\n".join(textwrap.dedent(o).strip() for o in outs))
 
-    # tfvars example
+    # tfvars example: emit only variables declared for this selected plan/provider.
+    tfvars_lines = [
+        f'project_name = "{project_name}"',
+        'environment = "dev"',
+    ]
     if provider == "aws":
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        aws_region     = "{region}"
-        vpc_cidr       = "10.0.0.0/16"
-        container_port = 8000
-        desired_count  = 2
-        db_username    = "appadmin"
-        # db_password  = ""  # set via TF_VAR_db_password
-        """
+        tfvars_lines.extend([
+            f'aws_region = "{region}"',
+            'vpc_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                'desired_count = 2',
+                '# container_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/app@sha256:<64-hex-digest>"',
+                '# certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/<certificate-id>"',
+            ])
     elif provider == "azure":
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        location       = "{region}"
-        vnet_cidr      = "10.0.0.0/16"
-        container_port = 8000
-        db_username    = "appadmin"
-        # db_password  = ""
-        """
+        tfvars_lines.extend([
+            f'location = "{region}"',
+            'vnet_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                '# container_image = "myregistry.azurecr.io/app@sha256:<64-hex-digest>"',
+            ])
     else:
-        tfvars = f"""
-        project_name   = "{project_name}"
-        environment    = "dev"
-        project_id     = "your-gcp-project-id"
-        region         = "{region}"
-        network_cidr   = "10.0.0.0/16"
-        container_port = 8000
-        db_username    = "appadmin"
-        # db_password  = ""
-        """
+        tfvars_lines.extend([
+            'project_id = "REPLACE_WITH_GCP_PROJECT_ID"',
+            f'region = "{region}"',
+            'network_cidr = "10.0.0.0/16"',
+        ])
+        if plan.needs_compute:
+            tfvars_lines.extend([
+                'container_port = 8000',
+                'allow_unauthenticated = false',
+                '# container_image = "us-central1-docker.pkg.dev/your-project/repo/app@sha256:<64-hex-digest>"',
+            ])
+    if plan.needs_database:
+        tfvars_lines.extend([
+            'db_username = "appadmin"',
+            '# Supply db_password with TF_VAR_db_password; do not store it here.',
+        ])
+    tfvars = "\n".join(tfvars_lines) + "\n"
     _write(output_dir / "terraform.tfvars.example", tfvars)
 
     for env in ("dev", "staging", "prod"):
@@ -599,17 +671,30 @@ def generate_project(
         terraform init
         terraform fmt
         terraform validate
-        terraform plan -var-file=environments/dev/terraform.tfvars
+        cp terraform.tfvars.example terraform.tfvars
+        # Edit terraform.tfvars: set container_image to an immutable digest,
+        # set certificate_arn for AWS, and replace the GCP project ID where applicable.
+        # Supply db_password through TF_VAR_db_password when a database is selected.
+        terraform plan -var-file=terraform.tfvars -var-file=environments/dev/terraform.tfvars
         # Review carefully, then:
-        terraform apply -var-file=environments/dev/terraform.tfvars
+        terraform apply -var-file=terraform.tfvars -var-file=environments/dev/terraform.tfvars
         ```
 
-        ## Security
+        ## Required inputs and security defaults
 
-        - Never commit state files or secrets.
-        - Databases are not publicly accessible by default.
-        - Use secret stores for passwords in real deployments.
-        - Prefer remote state for shared environments.
+        - Set `container_image` to an image that has already been built and pushed. It must use an immutable `repository@sha256:<64-hex-digest>` reference; mutable tags such as `:latest` are rejected by the generated variable validation.
+        - AWS requires an ACM certificate ARN in `certificate_arn`. The public ALB redirects HTTP to HTTPS and terminates TLS on port 443.
+        - Azure Container Registry admin credentials are disabled. The Container App uses a user-assigned managed identity with AcrPull.
+        - Azure PostgreSQL uses a delegated subnet, private DNS zone and disabled public network access.
+        - Cloud Run invocation is authenticated by default. Set `allow_unauthenticated = true` only when public access is explicitly approved.
+        - Supply database passwords through a secret manager or protected `TF_VAR_db_password` environment variable. Never commit secrets or populated tfvars.
+        - Configure a remote state backend and state locking before shared team or production use. The generated backend blocks are examples only.
+
+        ## Operational notes
+
+        - Push the immutable image before applying the infrastructure. Terraform does not build or publish container images.
+        - Confirm provider quotas, IAM permissions, domain/DNS, certificate region, networking and backups in a controlled pre-production environment.
+        - Terraform fmt/init/validate and static policies are not proof of deployability or production readiness.
 
         ## Destroy
 
@@ -630,6 +715,8 @@ def main() -> int:
     parser.add_argument("--project-name", default="app")
     parser.add_argument("--region", default=None)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--approve", action="store_true", help="Required to write generated Terraform files")
+    parser.add_argument("--overwrite", action="store_true", help="Allow replacement of files in a non-empty output directory")
     args = parser.parse_args()
 
     try:
@@ -639,11 +726,14 @@ def main() -> int:
         print(json.dumps(plan.to_dict(), indent=2))
         if args.plan_only:
             return 0
+        if not args.approve:
+            raise PermissionError("No files written. Re-run with --approve after reviewing the plan.")
         generate_project(
             Path(args.output),
             plan,
             project_name=args.project_name,
             region=args.region,
+            overwrite=args.overwrite,
         )
     except Exception as exc:
         logger.error("%s", exc)

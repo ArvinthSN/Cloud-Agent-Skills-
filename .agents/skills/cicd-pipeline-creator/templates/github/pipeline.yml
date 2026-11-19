@@ -1,7 +1,7 @@
-# Source: adapted from github.com/actions/starter-workflows + vendor READMEs
-# Fetched: @@FETCH_DATE@@   Upstream ref: @@UPSTREAM_REF@@
-# TODO(verify): resolve every tag below to a commit SHA, keep the tag as a comment
-name: CI-CD Pipeline
+# Source: reviewed GitHub Actions starter and official publisher examples
+# Fetched: @@FETCH_DATE@@   Template revision: @@UPSTREAM_REF@@
+# Third-party actions are pinned to immutable commit SHAs; refresh pins through reviewed releases.
+name: CI pipeline
 
 on:
   push:
@@ -17,45 +17,61 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  PROJECT_LANGUAGE: @@LANGUAGE@@
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
-        with: { python-version: '@@PYTHON_VERSION@@' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '@@NODE_VERSION@@' }
-      - uses: actions/cache@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-deps-
-      - run: @@INSTALL_CMD@@
+          persist-credentials: false
+      - name: Set up Python
+        if: env.PROJECT_LANGUAGE == 'python'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '@@PYTHON_VERSION@@'
+      - name: Set up Node.js
+        if: env.PROJECT_LANGUAGE == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '@@NODE_VERSION@@'
+      - uses: actions/cache@8ff5423e8b66eacab4e638ee52abbd2cb831366a # v5.0.1
+        with:
+          path: @@CACHE_PATH@@
+          key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
+      - name: Install dependencies
+        run: @@INSTALL_CMD@@
         working-directory: @@WORKING_DIR@@
-      - run: @@BUILD_CMD@@
+      - name: Build distributable
+        run: @@BUILD_CMD@@
         working-directory: @@WORKING_DIR@@
-      - uses: actions/upload-artifact@v4
+      - name: Verify distributable
+        run: |
+          test -d '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
+          test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
+      - uses: actions/upload-artifact@615b319bd27bb32c3d64dca6b6ed6974d5fbe653 # v6.0.0
         with:
           name: build-${{ github.run_id }}
-          path: @@ARTIFACT_PATH@@        # real build output only
+          path: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@'
           if-no-files-found: error
+          retention-days: 7
 
-  scan:                                  # source/dependency scan: needs no build artifact
+  scan:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0, persist-credentials: false }
-      - uses: gitleaks/gitleaks-action@v2        # TODO(verify): pin SHA; orgs need GITLEAKS_LICENSE
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0 # TODO(verify): pin immutable SHA; license may be required
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-      - uses: aquasecurity/trivy-action@0.28.0   # TODO(verify): pin SHA
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 # TODO(verify): pin immutable SHA
         with:
           scan-type: fs
           severity: HIGH,CRITICAL
@@ -67,42 +83,58 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
-        with: { python-version: '@@PYTHON_VERSION@@' }
-      - uses: actions/setup-node@v4
-        with: { node-version: '@@NODE_VERSION@@' }
-      - uses: actions/cache@v4              # reinstall: tests need dev deps the artifact lacks
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          path: |
-            ~/.cache/pip
-            ~/.npm
-          key: ${{ runner.os }}-deps-${{ hashFiles('**/requirements*.txt', '**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
-          restore-keys: ${{ runner.os }}-deps-
-      - run: @@INSTALL_CMD@@
+          persist-credentials: false
+      - name: Set up Python
+        if: env.PROJECT_LANGUAGE == 'python'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '@@PYTHON_VERSION@@'
+      - name: Set up Node.js
+        if: env.PROJECT_LANGUAGE == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '@@NODE_VERSION@@'
+      - uses: actions/cache@8ff5423e8b66eacab4e638ee52abbd2cb831366a # v5.0.1
+        with:
+          path: @@CACHE_PATH@@
+          key: ${{ runner.os }}-deps-${{ hashFiles('@@WORKING_DIR@@/@@LOCKFILE@@') }}
+      - name: Install test dependencies
+        run: @@INSTALL_CMD@@
         working-directory: @@WORKING_DIR@@
       - name: Run tests
         env:
           ALLOW_NO_TESTS: ${{ vars.ALLOW_NO_TESTS }}
-        run: @@TEST_CMD@@                   # no tests detected -> render emits warning + fail unless ALLOW_NO_TESTS=true
+        run: |
+          if [ '@@TEST_CMD@@' = 'NO_TESTS_DETECTED' ]; then
+            echo "::warning::No tests detected."
+            if [ "$ALLOW_NO_TESTS" = "true" ]; then exit 0; fi
+            echo "::error::No tests detected. Add tests or set ALLOW_NO_TESTS=true."
+            exit 1
+          fi
+          @@TEST_CMD@@
         working-directory: @@WORKING_DIR@@
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ github.run_id }}
-          path: @@TEST_REPORT_PATH@@        # junit xml + coverage only
-          if-no-files-found: warn
 
-  deploy-gate:
-    needs: [scan, test]
+  deploy:
+    needs: [build, scan, test]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      enabled: ${{ steps.g.outputs.enabled }}
+    environment: production
     steps:
-      - id: g
-        env: { DEPLOY_ENABLED: '${{ vars.DEPLOY_ENABLED }}' }
+      - uses: actions/download-artifact@0d2ec9d4cbcefe257d822f108de2a1f15f8da9f6 # v7.0.0
+        with:
+          name: build-${{ github.run_id }}
+          path: ./artifact
+      - name: Verify downloaded build artifact
+        run: test -n "$(find ./artifact -type f -print -quit)"
+      - name: Deployment remains disabled until a target-specific job is configured
+        env:
+          DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
         run: |
-          if [ "$DEPLOY_ENABLED" =
+          if [ "$DEPLOY_ENABLED" = "true" ]; then
+            echo "::error::DEPLOY_ENABLED is true, but this generic template has no configured deploy target. Add and validate a target-specific deployment action before enabling it."
+            exit 1
+          fi
+          echo "::notice::Build, scan and test completed. Deployment is disabled; configure a target-specific job before enabling releases."

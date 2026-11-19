@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/project-context.schema.json",
+  "title": "Cloud Agent Skills project context",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scanner_version",
+    "generated_at",
+    "root",
+    "revision",
+    "working_tree_dirty",
+    "snapshot_hash",
+    "file_count",
+    "total_size_bytes",
+    "scan_truncated",
+    "files",
+    "files_omitted",
+    "dependency_files",
+    "languages",
+    "frameworks",
+    "databases",
+    "env_var_names",
+    "sensitive_env_var_names",
+    "docker_files",
+    "has_dockerfile",
+    "has_docker_compose",
+    "infra_files",
+    "top_level_dirs",
+    "entry_points",
+    "service_dirs",
+    "ci_platforms",
+    "projects"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.1"
+    },
+    "scanner_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_tree_dirty": {
+      "type": "boolean"
+    },
+    "snapshot_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "file_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "scan_truncated": {
+      "type": "boolean",
+      "const": false
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "string"
+      }
+    },
+    "files_omitted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "dependency_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "frameworks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "databases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "env_var_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sensitive_env_var_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "docker_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "has_dockerfile": {
+      "type": "boolean"
+    },
+    "has_docker_compose": {
+      "type": "boolean"
+    },
+    "infra_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "top_level_dirs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entry_points": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "service_dirs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ci_platforms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/project"
+      }
+    },
+    "selected_project": {
+      "$ref": "#/$defs/project"
+    }
+  },
+  "$defs": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "dir",
+        "language",
+        "ci_lang",
+        "framework",
+        "databases",
+        "package_manager",
+        "manifest",
+        "version",
+        "entry_point",
+        "start_command",
+        "install_command",
+        "build_command",
+        "test_command",
+        "lockfile"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dir": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "ci_lang": {
+          "type": "string"
+        },
+        "framework": {
+          "type": "string"
+        },
+        "databases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "package_manager": {
+          "type": "string"
+        },
+        "manifest": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "entry_point": {
+          "type": "string"
+        },
+        "start_command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "install_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lockfile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

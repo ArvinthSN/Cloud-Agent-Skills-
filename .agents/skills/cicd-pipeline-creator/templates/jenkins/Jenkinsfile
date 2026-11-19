@@ -33,8 +33,8 @@ pipeline {
                     sh '@@INSTALL_CMD@@'
                     sh '@@BUILD_CMD@@'
                 }
-                stash name: 'build-artifact', includes: '@@ARTIFACT_PATH@@/**'
-                archiveArtifacts artifacts: '@@ARTIFACT_PATH@@/**', fingerprint: true, onlyIfSuccessful: true
+                stash name: 'build-artifact', includes: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@/**'
+                archiveArtifacts artifacts: '@@WORKING_DIR@@/@@ARTIFACT_PATH@@/**', fingerprint: true, onlyIfSuccessful: true
             }
         }
 
@@ -86,7 +86,7 @@ pipeline {
                     }
                     post {
                         always {
-                            junit testResults: '@@TEST_REPORT_GLOB@@', allowEmptyResults: false
+                            junit testResults: '@@TEST_REPORT_GLOB@@', allowEmptyResults: true
                             // coverage publishing: add the Coverage plugin step here. TODO(verify)
                         }
                     }

@@ -1,75 +1,119 @@
+# CircleCI 2.1 pipeline starter. Pin container images to registry digests for high-assurance use.
 version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: @@BUILD_IMAGE@@
+    working_directory: ~/project
+    resource_class: medium
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - deps-{{ checksum "@@WORKING_DIR@@/@@LOCKFILE@@" }}
+            - deps-
+      - run:
+          name: Install and build
+          no_output_timeout: 20m
+          command: |
+            set -eu
+            cd "@@WORKING_DIR@@"
+            @@INSTALL_CMD@@
+            @@BUILD_CMD@@
+            test -n "$(find '@@ARTIFACT_PATH@@' -type f -print -quit)"
+      - save_cache:
+          key: deps-{{ checksum "@@WORKING_DIR@@/@@LOCKFILE@@" }}
+          paths:
+            - "@@CACHE_PATH@@"
+      - persist_to_workspace:
+          root: .
+          paths:
+            - "@@WORKING_DIR@@/@@ARTIFACT_PATH@@"
+      - store_artifacts:
+          path: "@@WORKING_DIR@@/@@ARTIFACT_PATH@@"
+          destination: build-artifact
+
+  scan:
+    docker:
+      - image: cimg/base:2024.02
+    resource_class: medium
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Secret scan
+          no_output_timeout: 20m
+          command: |
+            docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:@@GITLEAKS_VERSION@@ \
+              detect --source /repo --redact --exit-code 1
+      - run:
+          name: Filesystem and dependency scan
+          no_output_timeout: 20m
+          command: |
+            docker run --rm -v "$PWD:/repo" aquasec/trivy:@@TRIVY_VERSION@@ \
+              fs --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed /repo
+
+  test:
+    docker:
+      - image: @@BUILD_IMAGE@@
+    working_directory: ~/project
+    resource_class: medium
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - deps-{{ checksum "@@WORKING_DIR@@/@@LOCKFILE@@" }}
+            - deps-
+      - run:
+          name: Run tests
+          no_output_timeout: 20m
+          command: |
+            set -eu
+            cd "@@WORKING_DIR@@"
+            ALLOW_NO_TESTS="${ALLOW_NO_TESTS:-false}"
+            if [ '@@TEST_CMD@@' = 'NO_TESTS_DETECTED' ]; then
+              echo "No tests detected."
+              if [ "$ALLOW_NO_TESTS" = "true" ]; then exit 0; fi
+              echo "Add tests or explicitly set ALLOW_NO_TESTS=true."
+              exit 1
+            fi
+            @@INSTALL_CMD@@
+            @@TEST_CMD@@
+      - save_cache:
+          key: deps-{{ checksum "@@WORKING_DIR@@/@@LOCKFILE@@" }}
+          paths:
+            - "@@CACHE_PATH@@"
+
+  deploy:
+    docker:
+      - image: cimg/base:2024.02
+    resource_class: small
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - run:
+          name: Verify artifact and keep deployment disabled
+          no_output_timeout: 10m
+          command: |
+            test -n "$(find '@@WORKING_DIR@@/@@ARTIFACT_PATH@@' -type f -print -quit)"
+            DEPLOY_ENABLED="${DEPLOY_ENABLED:-false}"
+            if [ "$DEPLOY_ENABLED" = "true" ]; then
+              echo "A target-specific deployment is not configured. Refusing to report success."
+              exit 1
+            fi
+            echo "Deployment disabled. Configure a restricted context and real deploy job."
 
 workflows:
   build_scan_test_deploy:
     jobs:
       - build
-      - scan:
-          requires:
-            - build
+      - scan
       - test:
-          requires:
-            - build
+          requires: [build]
       - deploy:
-          requires:
-            - scan
-            - test
+          requires: [build, scan, test]
           filters:
             branches:
-              only:
-                - main
-
-jobs:
-  build:
-    docker:
-      - image: cimg/base:stable
-    working_directory: ~/repo
-    no_output_timeout: 15m
-    steps:
-      - checkout
-      - run:
-          name: Install dependencies and build artifact
-          command: |
-            echo "TODO: install locked dependencies"
-            echo "TODO: build/package application"
-      - store_artifacts:
-          path: ./dist
-          destination: build-artifact
-
-  scan:
-    docker:
-      - image: cimg/base:stable
-    no_output_timeout: 15m
-    steps:
-      - checkout
-      - run:
-          name: Security scanning
-          command: |
-            echo "TODO: secret scanning"
-            echo "TODO: dependency/SCA scanning"
-            echo "TODO: SAST and container/IaC scanning when applicable"
-
-  test:
-    docker:
-      - image: cimg/base:stable
-    no_output_timeout: 20m
-    steps:
-      - checkout
-      - run:
-          name: Run tests
-          command: 'echo "TODO: detected unit/integration test commands"'
-      - store_test_results:
-          path: ./test-results
-      - store_artifacts:
-          path: ./coverage
-          destination: test-coverage
-
-  deploy:
-    docker:
-      - image: cimg/base:stable
-    no_output_timeout: 20m
-    steps:
-      - checkout
-      - run:
-          name: Deploy production artifact
-          command: 'echo "TODO: deploy built artifact to configured target"'
+              only: main

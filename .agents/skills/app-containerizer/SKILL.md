@@ -1,47 +1,54 @@
 ---
 name: app-containerizer
-description: Inspect application repositories and generate secure Docker artifacts, including Dockerfiles, Compose files, .dockerignore files, and image-ready container setup with validation.
+description: Inspect Python, Node.js and Java repositories and safely generate Dockerfiles, .dockerignore and explicit local Compose dependencies.
 ---
+
 # App Containerizer
 
 ## Purpose
-Convert an existing application repository into a reproducible container setup and generate the Docker assets needed to build, run, and validate the app in containers.
+Create reproducible container artifacts from verified repository facts.
+
+## Inputs and outputs
+- Input: one application directory, optional output path and explicitly selected local services.
+- Output: Dockerfile, .dockerignore, optional compose.yaml and compact execution report.
+- Detection: Python, Node.js and Java. Detection is heuristic; confirm uncertain startup commands and runtime details.
+
+## Supported generation matrix
+| Stack | Current generator support | Stop condition |
+|---|---|---|
+| Python | pip (requirements/pyproject), Poetry, uv | Missing manifest or unresolved startup command |
+| Node.js | npm with package-lock.json | pnpm/yarn or missing lockfile/start command |
+| Java | Maven executable JAR | Gradle or unconfirmed non-executable JAR |
+
+Flask uses the detected module path and requires Gunicorn as a project runtime dependency. Django generation stops until the WSGI module is confirmed. The generator must not replace an unsupported package manager with npm or pip.
 
 ## Workflow
-1. Inspect the repository using `scripts/scan_repository.py`.
-2. Analyze the scan using `scripts/analyze_application.py`.
-3. Review `references/` and present the proposed stack, runtime, port, startup command, dependencies and assumptions.
-4. Obtain approval before writing or replacing files.
-5. Generate Dockerfile and `.dockerignore`; generate Compose only when justified.
-6. Run static validation. Run a Docker build only when Docker is installed and the user explicitly requests it.
-7. Report generated files, PASS/FAIL/WARNING/SKIPPED/NOT_AVAILABLE statuses and remaining unknowns.
+1. Follow AGENTS.md and .agents/standards/.
+2. Scan the repository once with scripts/scan_repository.py. Reuse the scan unless the target or project revision changed.
+3. Analyze with scripts/analyze_application.py. Load only references relevant to the detected stack.
+4. Present stack, entry point, runtime, package manager, port, startup command, services and unknowns.
+5. Obtain approval before writing. Never overwrite Docker assets without explicit approval and --overwrite.
+6. Generate Dockerfile and .dockerignore. Generate Compose only for services explicitly selected by the user.
+7. Run static validation. Run docker build only when requested and available.
+8. Report artifacts and checks using PASS, FAIL, WARNING, SKIPPED or NOT_RUN.
 
-## Supported stacks
-- Python: FastAPI, Flask, Django; pip and Poetry indicators.
-- Node.js: Express, NestJS, React/Vite; npm, pnpm and yarn.
-- Java: Spring Boot; Maven and Gradle.
-
-Detection is heuristic. Do not guess when evidence is insufficient. Ask the user to confirm unknown startup commands, ports or service dependencies.
-
-## Safety and engineering rules
-- Prefer explicit maintained base-image versions; avoid `latest`.
-- Respect dependency lockfiles.
-- Use multi-stage builds when useful.
-- Run as non-root where practical.
-- Never copy `.env`, credentials, tokens, private keys or secret files into images.
-- Never embed secrets in Dockerfile or Compose configuration.
-- Use exec-form CMD/ENTRYPOINT.
-- Do not add databases or caches without evidence or explicit selection.
-- Never overwrite existing Docker files without explicit approval.
-- Never push to Git, deploy, provision infrastructure, delete source files or run arbitrary app scripts.
-- Never claim a build or runtime test passed unless it actually ran and succeeded.
+## Safety and correctness
+- Never copy .env files, credentials, tokens, private keys or local secrets into an image.
+- Prefer explicit maintained base-image versions; avoid latest.
+- Respect the detected lockfile and package manager. Unsupported combinations must stop clearly.
+- Use exec-form startup commands and a non-root runtime user where supported.
+- Do not invent ports, startup commands or service dependencies.
+- Preserve existing files unless explicit overwrite approval was provided.
+- Never push images, deploy, provision infrastructure or run arbitrary application scripts.
+- Missing Docker means NOT_RUN, not PASS. Static inspection is not a successful image build.
 
 ## CLI
-```bash
+~~~bash
 python scripts/scan_repository.py --path ./app --output scan.json
 python scripts/analyze_application.py --input scan.json --output plan.json
 python scripts/generate_dockerfile.py --path ./app --plan plan.json --approve
 python scripts/generate_compose.py --path ./app --plan plan.json --services postgresql --approve
 python scripts/validate_container.py --path ./app
-```
-Add `--overwrite` only after reviewing existing files. Add `--build` to validation only when an actual Docker build is desired.
+~~~
+
+Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired.

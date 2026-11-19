@@ -31,7 +31,7 @@ def render(plan,services):
     if "postgresql" in services: vols.append("  postgres_data:")
     if "mysql" in services: vols.append("  mysql_data:")
     if vols: lines += ["volumes:"]+vols
-    return "\\n".join(lines)+"\\n"
+    return "\n".join(lines)+"\n"
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument("--path",required=True); ap.add_argument("--plan",required=True); ap.add_argument("--services",default=""); ap.add_argument("--approve",action="store_true"); ap.add_argument("--overwrite",action="store_true")
     a=ap.parse_args(); repo=Path(a.path).resolve(); plan=json.loads(Path(a.plan).read_text())
@@ -40,6 +40,6 @@ def main():
     if target.exists() and not a.overwrite: ap.error("compose.yaml exists; use --overwrite after review.")
     services=[x.strip() for x in a.services.split(",") if x.strip()]
     if set(services)-{"postgresql","mysql","redis"}: ap.error("Allowed services: postgresql,mysql,redis")
-    target.write_text(render(plan,services))
+    target.write_text(render(plan,services), encoding="utf-8")
     print(json.dumps({"generated":[str(target)],"services":services},indent=2))
 if __name__=="__main__": main()

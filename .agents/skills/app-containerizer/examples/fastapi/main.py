@@ -1,1 +1,4 @@
-from fastapi import FastAPI\napp = FastAPI()\n@app.get('/health')\ndef health(): return {'status': 'ok'}\n
+from fastapi import FastAPI
+app = FastAPI()
+@app.get('/health')
+def health(): return {'status': 'ok'}
