@@ -575,3 +575,20 @@ def test_auto_plan_writes_architecture_and_selection_contracts(tmp_path):
     assert plan["project"]["confidence"] == profile["confidence"]
     assert selection["selected_skills"] == ["app-containerizer"]
     assert handoff["architecture_profile"]["file"] == str(run_dir / "architecture-profile.json")
+
+
+def test_execute_rejects_tampered_architecture_profile(tmp_path):
+    project = make_node_project(tmp_path / "tampered-profile-app")
+    run_dir = tmp_path / "tampered-profile-run"
+    plan_for(project, run_dir)
+    profile_path = run_dir / "architecture-profile.json"
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    profile["confidence"] = 0.01
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+    with pytest.raises(orchestrator.OrchestratorError, match="Architecture profile changed after planning"):
+        orchestrator.execute_run(args)
+    assert not (project / "Dockerfile").exists()
