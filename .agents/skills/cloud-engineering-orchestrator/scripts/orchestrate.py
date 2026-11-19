@@ -26,6 +26,7 @@ if str(INTELLIGENCE_ROOT) not in sys.path:
     sys.path.insert(0, str(INTELLIGENCE_ROOT))
 
 from intelligence import build_architecture_profile, build_skill_selection
+from verification import verify_artifacts
 MAX_TRANSACTION_FILES = 5000
 MAX_TRANSACTION_BYTES = 128 * 1024 * 1024
 STATE_SCHEMA_VERSION = "1.0"
@@ -1743,6 +1744,38 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
             risks.extend(result["risks"])
             manual.extend(result["manual_actions"])
 
+        verification_report = verify_artifacts(
+            plan,
+            run_dir,
+            docker_build=bool(args.docker_build),
+            terraform_plan=bool(args.terraform_plan),
+        )
+        validate_payload("verification-report.schema.json", verification_report, "verification report")
+        verification_path = run_dir / "verification-report.json"
+        durable_write_json(verification_path, verification_report)
+        for item in verification_report["checks"]:
+            all_checks.append(_check(
+                f"verification:{item['skill']}:{item['name']}",
+                item["status"],
+                item["detail"],
+            ))
+            if item["status"] == "FAIL":
+                affected = item["skill"] if item["skill"] in skill_results else None
+                targets = [affected] if affected else list(skill_results)
+                for target in targets:
+                    if skill_results[target]["status"] == "completed":
+                        skill_results[target]["status"] = "failed"
+                    skill_results[target]["risks"].append(
+                        f"Verification failed ({item['tool']}): {item['name']}. {item['detail']}"
+                    )
+                    skill_results[target]["manual_actions"].append(
+                        "Resolve verification failures and create a fresh plan before retrying."
+                    )
+            elif item["status"] in {"WARNING", "NOT_RUN"}:
+                manual.append(
+                    f"Verification {item['status']}: {item['name']} ({item['tool']}). {item['detail']}"
+                )
+
         statuses_before_rollback = [result["status"] for result in skill_results.values()]
         needs_rollback = any(status != "completed" for status in statuses_before_rollback)
         if needs_rollback:
@@ -1788,6 +1821,9 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
         else:
             overall = "partial"
 
+        if overall == "completed" and verification_report["status"] == "partial":
+            overall = "partial"
+
         report = {
             "schema_version": SCHEMA_VERSION,
             "status": overall,
@@ -1808,6 +1844,11 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
             },
             "artifacts": all_artifacts,
             "checks": all_checks,
+            "verification": {
+                "status": verification_report["status"],
+                "report": str(verification_path),
+                "summary": verification_report["summary"],
+            },
             "skill_reports": skill_results,
             "assumptions": sorted(set(assumptions)),
             "risks": sorted(set(risks)),
@@ -1925,7 +1966,44 @@ def build_parser() -> argparse.ArgumentParser:
     recover = subparsers.add_parser("recover", help="Restore project outputs from an interrupted execution journal.")
     recover.add_argument("--run-dir", required=True)
     recover.add_argument("--approve", action="store_true", help="Approve restoring the pre-run output snapshot.")
+
+    for command_parser in (execute, resume):
+        command_parser.add_argument(
+            "--docker-build", action="store_true",
+            help="Explicitly approve a local Docker build with network disabled; the temporary image is removed afterward.",
+        )
+        command_parser.add_argument(
+            "--terraform-plan", action="store_true",
+            help="Explicitly approve an isolated terraform plan (backend/refresh disabled; credentials removed). Only use with reviewed Terraform code.",
+        )
+
+    verify = subparsers.add_parser("verify", help="Re-run artifact, native-tool and security verification for a committed execution.")
+    verify.add_argument("--run-dir", required=True)
+    verify.add_argument("--docker-build", action="store_true", help="Explicitly run a local Docker build with network disabled.")
+    verify.add_argument("--terraform-plan", action="store_true", help="Explicitly run an isolated terraform plan without backend, refresh or credentials.")
     return parser
+
+
+def verify_run(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).resolve()
+    with ExecutionLock(run_dir):
+        plan = read_json(run_dir / "execution-plan.json")
+        context = read_json(run_dir / "project-context.json")
+        _verify_run_fresh(plan, context, run_dir, verify_project=False)
+        state = read_run_state(run_dir)
+        if state["run_id"] != plan["run_id"] or state["plan_hash"] != payload_hash(plan):
+            raise OrchestratorError("Execution journal does not match the reviewed plan.")
+        if state["transaction"]["phase"] != "committed":
+            raise OrchestratorError("Artifact verification requires a successfully committed execution.")
+        with project_execution_lock(Path(plan["project"]["root"])):
+            report = verify_artifacts(
+                plan, run_dir,
+                docker_build=bool(args.docker_build),
+                terraform_plan=bool(args.terraform_plan),
+            )
+            validate_payload("verification-report.schema.json", report, "verification report")
+            durable_write_json(run_dir / "verification-report.json", report)
+            return report
 
 
 def execution_receipt(report_path: Path, report: dict[str, Any]) -> dict[str, Any]:
@@ -1949,6 +2027,7 @@ def execution_receipt(report_path: Path, report: dict[str, Any]) -> dict[str, An
         "checks": check_counts,
         "risk_count": len(report.get("risks", [])),
         "manual_action_count": len(report.get("manual_actions", [])),
+        "verification": report.get("verification", {}).get("status"),
     }
 
 
@@ -1976,10 +2055,20 @@ def main() -> int:
             return 0
         if args.command == "resume":
             report = resume_run(args)
+        elif args.command == "verify":
+            report = verify_run(args)
         elif args.command == "recover":
             report = recover_run(args)
         else:
             report = execute_run(args)
+        if args.command == "verify":
+            print(json.dumps({
+                "status": report["status"],
+                "run_id": report["run_id"],
+                "report": str(Path(args.run_dir).resolve() / "verification-report.json"),
+                "checks": report["summary"],
+            }, separators=(",", ":")))
+            return 0 if report["status"] == "completed" else 2 if report["status"] == "partial" else 1
         if args.command == "recover":
             receipt = {
                 "status": report.get("status"),
