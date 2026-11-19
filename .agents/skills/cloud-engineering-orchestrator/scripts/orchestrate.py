@@ -1643,6 +1643,10 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
         raise OrchestratorError(f"{run_dir} is not a valid orchestrator run directory.")
     plan = read_json(plan_path)
     context = read_json(context_path)
+    if args.docker_build and "app-containerizer" not in plan.get("selected_skills", []):
+        raise OrchestratorError("--docker-build requires app-containerizer in the selected skills.")
+    if args.terraform_plan and "infra-creator" not in plan.get("selected_skills", []):
+        raise OrchestratorError("--terraform-plan requires infra-creator in the selected skills.")
     if not args.approve:
         raise OrchestratorError("No project files were changed. Re-run with --approve after reviewing execution-plan.json and handoffs/.")
     journal_path = state_path(run_dir)
@@ -1989,6 +1993,10 @@ def verify_run(args: argparse.Namespace) -> dict[str, Any]:
     with ExecutionLock(run_dir):
         plan = read_json(run_dir / "execution-plan.json")
         context = read_json(run_dir / "project-context.json")
+        if args.docker_build and "app-containerizer" not in plan.get("selected_skills", []):
+            raise OrchestratorError("--docker-build requires app-containerizer in the selected skills.")
+        if args.terraform_plan and "infra-creator" not in plan.get("selected_skills", []):
+            raise OrchestratorError("--terraform-plan requires infra-creator in the selected skills.")
         _verify_run_fresh(plan, context, run_dir, verify_project=False)
         state = read_run_state(run_dir)
         if state["run_id"] != plan["run_id"] or state["plan_hash"] != payload_hash(plan):
