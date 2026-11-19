@@ -142,6 +142,30 @@ def _verify_container(
                    name=str(item.get("check", "container-check")), status=status,
                    tool="validate_container.py", detail=str(item.get("detail", "")))
 
+    dockerfile = root / "Dockerfile"
+    hadolint = shutil.which("hadolint")
+    if not dockerfile.is_file():
+        _check(checks, skill="app-containerizer", category="static", name="hadolint-dockerfile-lint",
+               status="SKIPPED", tool="hadolint", detail="Dockerfile is missing.")
+    elif not hadolint:
+        _check(checks, skill="app-containerizer", category="static", name="hadolint-dockerfile-lint",
+               status="NOT_RUN", tool="hadolint", detail="Hadolint is not installed.")
+    else:
+        lint = _run([hadolint, "--format", "json", str(dockerfile)], cwd=root, timeout=60)
+        findings = _parse_json(lint.stdout if lint else "")
+        if lint is None:
+            lint_status, lint_detail = "NOT_RUN", "Hadolint could not complete or timed out."
+        elif lint.returncode == 0 and isinstance(findings, list) and not findings:
+            lint_status, lint_detail = "PASS", "Hadolint reported no Dockerfile findings."
+        elif isinstance(findings, list):
+            errors = sum(1 for item in findings if str(item.get("level", "")).lower() == "error")
+            lint_status = "FAIL" if errors else "WARNING"
+            lint_detail = f"Hadolint findings={len(findings)}; errors={errors}."
+        else:
+            lint_status, lint_detail = "FAIL", f"Hadolint exited with code {lint.returncode}; JSON output was unavailable."
+        _check(checks, skill="app-containerizer", category="static", name="hadolint-dockerfile-lint",
+               status=lint_status, tool="hadolint", detail=lint_detail)
+
     docker = shutil.which("docker")
     if not docker_build:
         _check(checks, skill="app-containerizer", category="build", name="docker-image-build",
