@@ -24,7 +24,7 @@ Flask uses the detected module path and requires Gunicorn as a project runtime d
 
 ## Workflow
 1. Follow AGENTS.md and .agents/standards/.
-2. Scan the repository once with scripts/scan_repository.py. Reuse the scan unless the target or project revision changed.
+2. Scan the repository once with scripts/scan_repository.py. Reuse the scan unless the target or project revision changed. If `scan_truncated` is true, stop and narrow the scan scope; never generate from an incomplete scan.
 3. Analyze with scripts/analyze_application.py. Load only references relevant to the detected stack.
 4. Present stack, entry point, runtime, package manager, port, startup command, services and unknowns.
 5. Obtain approval before writing. Never overwrite Docker assets without explicit approval and --overwrite.
