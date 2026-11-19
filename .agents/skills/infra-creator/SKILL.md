@@ -30,11 +30,11 @@ Generate reviewable Terraform from evidence in an application repository.
 5. Explain each resource, module dependency, cost-relevant choice, assumption and unknown.
 6. Obtain explicit approval before writing. Generation requires --approve; existing non-empty output requires separate --overwrite approval.
 7. Generate only capabilities supported by the selected provider templates. Stop clearly for serverless/VM plans and unsupported dependency combinations.
-8. Run scripts/validate_terraform.py. It first applies provider-aware static security policies, then validates an isolated copy with Terraform when installed; it never applies infrastructure. Missing Terraform is NOT_RUN.
+8. Run scripts/validate_terraform.py. It applies provider-aware static security policies, then validates an isolated copy with Terraform when installed; it never applies infrastructure. Missing Terraform is NOT_RUN. The orchestrator can additionally run an isolated Terraform plan only with explicit --terraform-plan approval.
 9. Report artifacts and check statuses, including Terraform NOT_RUN when the CLI is unavailable.
 
 ## Safety
-- Never run terraform apply or destroy.
+- Never run terraform apply or destroy. Terraform plan is read-only with backend and refresh disabled, but provider plugins and external data sources can execute code; review the configuration before explicitly requesting it.
 - Never provision cloud resources, change cloud accounts or push to GitHub.
 - Never hardcode credentials or secret values. Use secret managers or environment variables.
 - Do not expose databases publicly by default.
