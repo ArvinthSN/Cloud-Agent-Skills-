@@ -111,7 +111,7 @@ Each plan includes `architecture-profile.json` and `skill-selection.json` alongs
 
 ## Phase 2: output verification
 
-The orchestrator now verifies generated artifacts before committing its output transaction. It checks artifact presence, runs the existing container/CI/Terraform validators, invokes available native validators and automatically uses installed Gitleaks, Trivy and Checkov scanners. Missing optional tools are recorded as `NOT_RUN`, never as a pass. Mandatory verification failures trigger the existing rollback mechanism.
+The orchestrator now verifies generated artifacts before committing its output transaction. It checks artifact presence, runs the existing container/CI/Terraform validators, invokes available native validators and automatically uses installed Gitleaks, Trivy and Checkov scanners. Trivy also scans a locally built image when an approved Docker build is requested. Missing optional tools are recorded as `NOT_RUN`, never as a pass. Mandatory verification failures trigger the existing rollback mechanism.
 
 Docker image builds and Terraform plans require explicit opt-in:
 
