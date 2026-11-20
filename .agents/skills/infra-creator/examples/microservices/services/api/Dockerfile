@@ -1,1 +1,3 @@
-FROM python:3.12-slim\nWORKDIR /app\nCMD ["python","-c","print('api')"]
+FROM python:3.12-slim
+WORKDIR /app
+CMD ["python", "-c", "print('api')"]
