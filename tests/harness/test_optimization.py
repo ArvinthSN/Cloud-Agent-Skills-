@@ -51,6 +51,20 @@ def test_repair_budget_exhaustion_escalates():
     assert plan["policy"]["attempts_remaining"] == 0
 
 
+def test_repair_budget_is_global_across_all_failed_checks():
+    report = {"checks": [
+        {"name": "network-a", "status": "FAIL", "detail": "HTTP 503 service unavailable"},
+        {"name": "network-b", "status": "FAIL", "detail": "Connection reset"},
+        {"name": "network-c", "status": "FAIL", "detail": "Temporary failure"},
+    ]}
+    plan = build_repair_plan(report, max_attempts=1)
+    assert len(plan["proposals"]) == 1
+    assert len(plan["escalations"]) == 2
+    assert plan["policy"]["proposed_retries"] == 1
+    assert plan["policy"]["attempts_remaining"] == 0
+    assert plan["policy"]["budget_scope"] == "entire_execution_run"
+
+
 def _report(score, correctness, status="PASS", findings=None):
     return {"average_weighted_score": score, "results": [{
         "case_id": "python-fastapi", "status": status,
