@@ -1,0 +1,137 @@
+name: Production Readiness v1.0
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-build-and-smoke:
+    name: Docker build and hardened runtime smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Build generated Dockerfile and verify hardened runtime
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          IMAGE_TAG="cloud-agent-readiness:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python .agents/production-readiness/runtime_smoke.py --image-tag "$IMAGE_TAG" --keep-image | tee artifacts/runtime-report.json
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Install pinned Trivy scanner
+        run: docker pull aquasec/trivy:0.58.2
+      - name: Scan built image for HIGH and CRITICAL vulnerabilities and secrets
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/artifacts:/reports" aquasec/trivy:0.58.2 image \
+            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --format json --output /reports/trivy-image.json \
+            "${{ steps.runtime.outputs.image_tag }}"
+      - name: Generate CycloneDX image SBOM
+        if: always() && steps.runtime.outputs.image_tag != ''
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/artifacts:/reports" aquasec/trivy:0.58.2 image \
+            --format cyclonedx --output /reports/image-sbom.cdx.json \
+            "${{ steps.runtime.outputs.image_tag }}"
+      - name: Remove temporary image
+        if: always() && steps.runtime.outputs.image_tag != ''
+        run: docker image rm --force "${{ steps.runtime.outputs.image_tag }}" || true
+      - name: Upload runtime and SBOM evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-readiness-runtime-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30
+
+  terraform-validation:
+    name: Terraform native validation and plan smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install pinned Terraform CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=1.10.5
+          curl --fail --silent --show-error --location "https://releases.hashicorp.com/terraform/${VERSION}/terraform_${VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+          unzip -q /tmp/terraform.zip -d /tmp/terraform
+          sudo install /tmp/terraform/terraform /usr/local/bin/terraform
+          terraform version
+      - name: Run isolated fmt, init, validate and plan
+        run: python .agents/production-readiness/terraform_smoke.py --output artifacts/terraform
+      - name: Scan Terraform smoke fixture for HIGH and CRITICAL misconfiguration
+        run: |
+          docker run --rm -v "$PWD/artifacts/terraform/fixture:/scan" aquasec/trivy:0.58.2 config \
+            --severity HIGH,CRITICAL --exit-code 1 --format json --output /scan/trivy-config.json /scan
+      - name: Upload Terraform evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-readiness-terraform-${{ github.run_id }}
+          path: artifacts/terraform/
+          if-no-files-found: warn
+          retention-days: 30
+
+  repository-security:
+    name: Secret and IaC misconfiguration scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan repository history and working tree with Gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.24.2 dir \
+            --redact --no-banner --exit-code 1 /repo
+      - name: Scan repository IaC and configuration with Trivy
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" aquasec/trivy:0.58.2 fs /repo \
+            --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 \
+            --skip-dirs .git --skip-dirs .venv --skip-dirs node_modules
+
+  release-gate:
+    name: Production readiness release gate
+    if: always()
+    needs: [runtime-build-and-smoke, terraform-validation, repository-security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every readiness job to pass
+        env:
+          RUNTIME_RESULT: ${{ needs.runtime-build-and-smoke.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform-validation.result }}
+          SECURITY_RESULT: ${{ needs.repository-security.result }}
+        run: |
+          printf 'runtime=%s terraform=%s security=%s\n' "$RUNTIME_RESULT" "$TERRAFORM_RESULT" "$SECURITY_RESULT"
+          test "$RUNTIME_RESULT" = success
+          test "$TERRAFORM_RESULT" = success
+          test "$SECURITY_RESULT" = success
