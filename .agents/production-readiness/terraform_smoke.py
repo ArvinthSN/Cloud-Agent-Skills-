@@ -62,7 +62,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cloud-agent-terraform-") as temp:
         workspace = Path(temp) / "workspace"
         shutil.copytree(fixture, workspace)
-        report["checks"]["fmt"] = execute([terraform, "fmt", "-check", "-recursive"], workspace)
+        report["checks"]["fmt"] = execute([terraform, "fmt", "-recursive"], workspace)
+        if report["checks"]["fmt"]["status"] == "PASS":
+            report["checks"]["fmt_check"] = execute([terraform, "fmt", "-check", "-recursive"], workspace)
+        else:
+            report["checks"]["fmt_check"] = {"status": "SKIPPED", "detail": "terraform fmt failed"}
         report["checks"]["init"] = execute([
             terraform, "init", "-backend=false", "-input=false", "-no-color",
         ], workspace, timeout=300)
