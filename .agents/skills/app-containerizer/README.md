@@ -16,7 +16,7 @@ A prompt can draft a Dockerfile from a description. This project combines reusab
 - `tests/`: pytest coverage.
 
 ## Supported stacks
-Python (FastAPI, Flask, Django), Node.js (Express, NestJS, React/Vite), and Java (Spring Boot, Maven/Gradle). Detection is heuristic and uncertain details must be confirmed.
+Python (FastAPI, Flask, Django), Node.js (Express, NestJS, React/Vite), and Java (Spring Boot with Maven or Gradle `bootJar`). Python image versions are inferred from `pyproject.toml` version constraints; Java versions and Gradle wrapper versions are read from build metadata when available. Detection is heuristic, and uncertain details must be confirmed.
 
 ## Setup
 Python 3.10+ recommended. Runtime scripts use only the standard library.
@@ -50,3 +50,7 @@ The skill does not deploy, provision infrastructure, push to GitHub, delete sour
 ```bash
 pytest -q
 ```
+
+### Runtime metadata
+
+Inspect `runtime_version`, `runtime_constraint`, and `runtime_version_source` in Python plans. For Gradle, inspect `runtime_version`, `build_tool_version`, and `gradle_wrapper`. The generated Spring Boot Dockerfile packages `bootJar` and runs the executable JAR as a non-root user.
