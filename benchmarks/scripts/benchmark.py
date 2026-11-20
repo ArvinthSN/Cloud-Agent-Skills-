@@ -20,6 +20,9 @@ def load_dataset(path: Path) -> dict[str, Any]:
     if set(weights) != set(DIMENSIONS) or sum(weights.values()) != 100:
         raise ValueError("Scoring weights must define five dimensions and sum to 100")
     for case in data["cases"]:
+        case_path = Path(case["id"])
+        if case_path.is_absolute() or len(case_path.parts) != 1 or case["id"] in {".", ".."}:
+            raise ValueError("Unsafe benchmark case id: " + str(case["id"]))
         if not case.get("expected_artifacts") or not isinstance(case.get("expected_signals"), list):
             raise ValueError(f"Case {case['id']} needs expected_artifacts and expected_signals")
         for relative in case["expected_artifacts"]:
@@ -54,8 +57,8 @@ def score_case(case: dict[str, Any], workspace: Path, rules: dict[str, Any]) -> 
     for pattern in rules.get("warning_patterns", []):
         if re.search(pattern, combined, re.I | re.M): findings.append({"severity":"WARNING","rule":pattern})
     security = 0.0 if any(f["severity"]=="FAIL" for f in findings) else (80.0 if findings else (100.0 if contents else 0.0))
-    metadata_path = repo / "benchmark-metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
+    metadata_text = safe_read(repo, "benchmark-metadata.json") if repo.is_dir() else None
+    metadata = json.loads(metadata_text) if metadata_text is not None else {}
     first, second = metadata.get("first_run_sha256"), metadata.get("second_run_sha256")
     reproducibility = (100.0 if first == second else 0.0) if isinstance(first,str) and isinstance(second,str) else None
     elapsed = metadata.get("elapsed_seconds")
