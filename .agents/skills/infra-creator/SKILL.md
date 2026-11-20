@@ -16,9 +16,9 @@ Generate reviewable Terraform from evidence in an application repository.
 ## Secure defaults and required inputs
 
 - Every generated compute module requires `container_image` to be an immutable OCI digest reference (`repository@sha256:<64 hex characters>`). Build and push the image separately before provisioning.
-- AWS ECR enforces immutable tags. The public ALB redirects HTTP to HTTPS and requires an ACM certificate ARN in the selected AWS region.
-- Azure Container Registry admin access is disabled. The Container App pulls through a user-assigned managed identity with AcrPull. Azure PostgreSQL uses a delegated subnet, private DNS and disabled public network access.
-- GCP Cloud Run is authenticated by default. Unauthenticated invocation is created only when `allow_unauthenticated=true` is explicitly approved.
+- AWS ECR enforces immutable tags. The ALB is internal by default, uses private subnets and VPC-scoped ingress/egress CIDRs, drops invalid headers, redirects HTTP to HTTPS and requires an ACM certificate ARN. Public exposure requires explicitly setting `internal=false` and reviewing `allowed_ingress_cidrs`.
+- Azure Container Registry admin access is disabled. The Container App pulls through a user-assigned managed identity with AcrPull. Azure PostgreSQL uses a delegated subnet, private DNS and disabled public network access. Application subnet HTTP/HTTPS ingress is limited to the VNet CIDR by default.
+- GCP Cloud Run is authenticated by default. Unauthenticated invocation is created only when `allow_unauthenticated=true` is explicitly approved. Cloud SQL requires encrypted-only TLS connections.
 - Database passwords remain sensitive inputs and must be supplied through a protected environment or secret manager, not committed tfvars.
 - Shared/team use requires a reviewed remote-state backend with state locking; the generated backend snippets are examples and are not enabled automatically.
 
