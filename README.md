@@ -130,3 +130,8 @@ Re-run checks after a committed execution with `orchestrate.py verify --run-dir 
 ## Phase 3: benchmark harness
 
 A 24-case benchmark dataset covers Python/Node/Java/Go/Rust containerization, CI/CD generation, AWS/Azure/GCP Terraform generation and end-to-end scenarios. Run `python benchmarks/scripts/benchmark.py --validate-only` to validate the dataset. To score generated artifacts, prepare one workspace directory per case ID and run `python benchmarks/scripts/benchmark.py --workspace ./benchmark-workspace --output ./benchmark-report.json`. The report scores correctness, completeness, security, reproducibility and efficiency. Reproducibility and efficiency are marked unmeasured unless explicit run metadata is supplied; the checked-in scenarios are not claimed as real-world benchmark results. See `benchmarks/README.md` for the corpus contract and scoring details.
+
+
+## Phase 4: optimization and continuous improvement
+
+Execution telemetry, cache observability, approval-gated bounded repair plans, and a benchmark regression gate are documented in [`benchmarks/PHASE4.md`](benchmarks/PHASE4.md). Telemetry uses metadata-only token estimates; it does not capture source or artifact contents. Security and policy failures are never eligible for automatic retry.
