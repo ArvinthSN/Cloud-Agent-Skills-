@@ -215,6 +215,50 @@
           }
         }
       }
+    },
+    "optimization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report",
+        "summary"
+      ],
+      "properties": {
+        "report": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "duration_seconds",
+            "context_cache_status",
+            "estimated_input_tokens",
+            "estimated_output_tokens"
+          ],
+          "properties": {
+            "duration_seconds": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "context_cache_status": {
+              "type": "string"
+            },
+            "estimated_input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "estimated_output_tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
