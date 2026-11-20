@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ if str(INTELLIGENCE_ROOT) not in sys.path:
 
 from intelligence import build_architecture_profile, build_skill_selection
 from verification import verify_artifacts
+from optimization.repair import build_repair_plan
+from optimization.telemetry import build_optimization_report, write_optimization_report
 MAX_TRANSACTION_FILES = 5000
 MAX_TRANSACTION_BYTES = 128 * 1024 * 1024
 STATE_SCHEMA_VERSION = "1.0"
@@ -1694,6 +1697,7 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
 
     started_at = utc_now()
     skill_results: dict[str, Any] = {}
+    skill_durations: dict[str, float] = {}
     all_checks: list[dict[str, str]] = [
         _check(
             "output-preflight",
@@ -1736,7 +1740,9 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
                     "manual_actions": ["Resolve prerequisite failures and create a fresh execution plan before retrying."],
                 }
             else:
+                skill_started = time.perf_counter()
                 result = execute_skill(skill, handoff, run_dir, args.overwrite)
+                skill_durations[skill] = time.perf_counter() - skill_started
             skill_results[skill] = result
             if result["status"] == "completed":
                 state["completed_skills"].append(skill)
@@ -1860,6 +1866,18 @@ def _execute_locked(args: argparse.Namespace, *, resume: bool = False) -> dict[s
             "started_at": started_at,
             "finished_at": utc_now(),
         }
+        optimization_report = build_optimization_report(plan, report, run_dir, skill_durations)
+        telemetry_path = run_dir / "telemetry.json"
+        write_optimization_report(telemetry_path, optimization_report)
+        report["optimization"] = {
+            "report": str(telemetry_path),
+            "summary": {
+                "duration_seconds": optimization_report["duration_seconds"],
+                "context_cache_status": optimization_report["context_cache"]["status"],
+                "estimated_input_tokens": optimization_report["metadata_size"]["estimated_input_tokens"],
+                "estimated_output_tokens": optimization_report["metadata_size"]["estimated_output_tokens"],
+            },
+        }
         validate_payload("execution-report.schema.json", report, "execution report")
         durable_write_json(run_dir / "execution-report.json", report)
         if not needs_rollback:
@@ -1981,6 +1999,11 @@ def build_parser() -> argparse.ArgumentParser:
             help="Explicitly approve an isolated terraform plan (backend/refresh disabled; credentials removed). Only use with reviewed Terraform code.",
         )
 
+    repair = subparsers.add_parser("repair-plan", help="Create a bounded, approval-gated repair plan from a failed execution.")
+    repair.add_argument("--run-dir", required=True)
+    repair.add_argument("--max-attempts", type=int, default=1, help="Maximum retry budget (0-2; default 1).")
+    repair.add_argument("--attempts-used", type=int, default=0, help="Retries already consumed from this repair budget.")
+
     verify = subparsers.add_parser("verify", help="Re-run artifact, native-tool and security verification for a committed execution.")
     verify.add_argument("--run-dir", required=True)
     verify.add_argument("--docker-build", action="store_true", help="Explicitly run a local Docker build with network disabled.")
@@ -2014,6 +2037,25 @@ def verify_run(args: argparse.Namespace) -> dict[str, Any]:
             return report
 
 
+def create_repair_plan(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.run_dir).resolve()
+    with ExecutionLock(run_dir):
+        report_path = run_dir / "execution-report.json"
+        if not report_path.is_file():
+            raise OrchestratorError("No execution-report.json exists for this run.")
+        report = read_json(report_path)
+        try:
+            repair = build_repair_plan(
+                report,
+                max_attempts=args.max_attempts,
+                attempts_used=args.attempts_used,
+            )
+        except ValueError as exc:
+            raise OrchestratorError(str(exc)) from exc
+        durable_write_json(run_dir / "repair-plan.json", repair)
+        return repair
+
+
 def execution_receipt(report_path: Path, report: dict[str, Any]) -> dict[str, Any]:
     """Return a compact CLI receipt; keep full evidence in execution-report.json."""
     check_counts = {
@@ -2043,6 +2085,10 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
+        if args.command == "repair-plan":
+            repair = create_repair_plan(args)
+            print(json.dumps({"status": repair["status"], "proposals": len(repair["proposals"]), "escalations": len(repair["escalations"]), "report": str(Path(args.run_dir).resolve() / "repair-plan.json")}, separators=(",", ":")))
+            return 0
         if args.command == "plan":
             plan = create_plan(args)
             print(json.dumps({
