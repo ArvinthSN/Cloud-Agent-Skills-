@@ -70,7 +70,7 @@ def build_repair_plan(
         "policy": {
             "max_attempts": max_attempts,
             "attempts_used": attempts_used,
-            "attempts_remaining": max_attempts - attempts_used,
+            "attempts_remaining": attempts_remaining,
             "proposed_retries": len(proposals),
             "automatic_file_mutation": False,
             "security_failures_retryable": False,
