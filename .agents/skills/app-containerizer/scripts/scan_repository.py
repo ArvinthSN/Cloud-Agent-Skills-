@@ -88,9 +88,8 @@ def scan(repo: Path) -> dict:
             "unknown",
         )
 
-        # Prefer the project's declared PEP 621/Poetry Python constraint over
-        # a global default. The selected lower bound is the minimum compatible
-        # runtime for ranges such as ">=3.11,<4.0".
+        # Prefer the declared Python constraint over a global default so the
+        # generated image cannot be older than the project's minimum version.
         pyproject_path = next((repo / path for path in paths if Path(path).name == "pyproject.toml"), None)
         if pyproject_path:
             pyproject_text = _read_text(pyproject_path)
@@ -111,7 +110,6 @@ def scan(repo: Path) -> dict:
                     runtime = f"3.{minor}"
                 runtime_source = "pyproject.toml"
             else:
-                # Upper-bound-only declarations still constrain the safe choice.
                 upper_match = re.search(r"(?:<=|<)\s*(3\.\d+)", runtime_constraint)
                 runtime = upper_match.group(1) if upper_match else "3.12"
                 if upper_match and runtime_constraint.lstrip().startswith("<") and not runtime_constraint.lstrip().startswith("<="):
@@ -154,8 +152,7 @@ def scan(repo: Path) -> dict:
         stack = "java"
         framework = "spring-boot" if "spring-boot" in search_text else "java"
 
-        # Prefer a root-level Gradle build when present. This avoids pairing a
-        # nested Maven example with an unrelated root Gradle project.
+        # Prefer a root Gradle manifest over nested sample Maven projects.
         root_gradle = next(
             (path for path in paths if Path(path).parent == Path(".")
              and Path(path).name in ("build.gradle", "build.gradle.kts")),
@@ -166,7 +163,7 @@ def scan(repo: Path) -> dict:
             None,
         )
         if root_gradle and root_maven:
-            # Two root build systems are ambiguous: do not silently pick one.
+            # Multiple root build systems are ambiguous; do not guess.
             manager, dependency = "unknown", None
         elif root_gradle:
             manager, dependency = "gradle", root_gradle
@@ -200,3 +197,71 @@ def scan(repo: Path) -> dict:
             if gradle_match:
                 build_tool_version = gradle_match.group(1)
 
+    services: list[str] = []
+    for name, pattern in (
+        ("postgresql", r"\bpostgres(?:ql)?\b"),
+        ("mysql", r"\bmysql\b"),
+        ("redis", r"\bredis\b"),
+    ):
+        if re.search(pattern, search_text):
+            services.append(name)
+
+    return {
+        "repository": str(repo),
+        "project_type": stack,
+        "framework": framework,
+        "package_manager": manager,
+        "dependency_file": dependency,
+        "entry_point": entry,
+        "start_command": start_command,
+        "runtime_version": runtime,
+        "runtime_version_source": runtime_source,
+        "runtime_constraint": runtime_constraint,
+        "build_tool_version": build_tool_version,
+        "gradle_wrapper": gradle_wrapper,
+        "existing_dockerfile": any(Path(path).name.lower() == "dockerfile" for path in paths),
+        "existing_compose": any(
+            Path(path).name.lower() in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
+            for path in paths
+        ),
+        "env_files_detected": [path for path in paths if Path(path).name.startswith(".env")],
+        "detected_services": services,
+        "compose_required": bool(services),
+        "file_count": len(paths),
+        "confidence": "high" if framework != "unknown" else "low",
+        "scan_truncated": truncated,
+        "scan_limit": MAX_FILES,
+        "files_sample": paths[:250],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Scan an application repository without modifying it.")
+    parser.add_argument("--path", required=True)
+    parser.add_argument("--output")
+    args = parser.parse_args()
+    repo = Path(args.path)
+    if not repo.is_dir():
+        parser.error("--path must be an existing directory")
+    report = scan(repo)
+    result = json.dumps(report, indent=2)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(result + "\n", encoding="utf-8")
+        # Keep agent stdout small; the complete report remains available as an artifact.
+        print(json.dumps({
+            "status": "completed",
+            "report": str(output_path),
+            "project_type": report["project_type"],
+            "framework": report["framework"],
+            "file_count": report["file_count"],
+            "scan_truncated": report["scan_truncated"],
+        }, separators=(",", ":")))
+    else:
+        # Preserve machine-readable stdout when no artifact path is supplied.
+        print(result)
+
+
+if __name__ == "__main__":
+    main()
