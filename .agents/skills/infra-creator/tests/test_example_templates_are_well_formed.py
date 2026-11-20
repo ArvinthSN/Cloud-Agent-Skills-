@@ -41,6 +41,12 @@ def test_provider_templates_use_restrictive_network_defaults():
     aws_variables = (
         SKILL_ROOT / "templates" / "aws" / "compute" / "container" / "variables.tf"
     ).read_text(encoding="utf-8")
+    aws_network = (
+        SKILL_ROOT / "templates" / "aws" / "networking" / "network" / "main.tf"
+    ).read_text(encoding="utf-8")
+    aws_database = (
+        SKILL_ROOT / "templates" / "aws" / "database" / "sql" / "main.tf"
+    ).read_text(encoding="utf-8")
     azure_network = (
         SKILL_ROOT / "templates" / "azure" / "networking" / "network" / "main.tf"
     ).read_text(encoding="utf-8")
@@ -52,5 +58,8 @@ def test_provider_templates_use_restrictive_network_defaults():
     assert 'default = true' in aws_variables
     assert "drop_invalid_header_fields = true" in aws_compute
     assert 'cidr_blocks = ["0.0.0.0/0"]' not in aws_compute
+    assert 'cidr_blocks = ["0.0.0.0/0"]' not in aws_database
+    assert "map_public_ip_on_launch = false" in aws_network
+    assert "publicly_accessible     = false" in aws_database
     assert 'source_address_prefix      = var.vnet_cidr' in azure_network
     assert 'ssl_mode        = "ENCRYPTED_ONLY"' in gcp_sql
