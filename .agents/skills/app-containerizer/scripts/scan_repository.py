@@ -162,9 +162,18 @@ def scan(repo: Path) -> dict:
             (path for path in paths if Path(path).parent == Path(".") and Path(path).name == "pom.xml"),
             None,
         )
+        wrapper_properties = next(
+            (path for path in paths if path.endswith("gradle/wrapper/gradle-wrapper.properties")),
+            None,
+        )
+        gradle_wrapper = bool(wrapper_properties and "gradlew" in lowered)
         if root_gradle and root_maven:
-            # Multiple root build systems are ambiguous; do not guess.
-            manager, dependency = "unknown", None
+            # A checked-in Gradle wrapper is authoritative when both manifests exist.
+            # Without that signal, preserve fail-closed behavior for ambiguous builds.
+            if gradle_wrapper:
+                manager, dependency = "gradle", root_gradle
+            else:
+                manager, dependency = "unknown", None
         elif root_gradle:
             manager, dependency = "gradle", root_gradle
         elif root_maven:
@@ -186,11 +195,6 @@ def scan(repo: Path) -> dict:
         if java_match:
             runtime = java_match.group(1)
 
-        wrapper_properties = next(
-            (path for path in paths if path.endswith("gradle/wrapper/gradle-wrapper.properties")),
-            None,
-        )
-        gradle_wrapper = bool(wrapper_properties and "gradlew" in lowered)
         if wrapper_properties:
             wrapper_text = _read_text(repo / wrapper_properties)
             gradle_match = re.search(r"gradle-(\d+(?:\.\d+)+)-(?:bin|all)\.zip", wrapper_text)
