@@ -37,11 +37,12 @@ def analyze(scan: dict) -> dict:
         if package_manager not in ("npm",):
             unknowns.append(f"The detected package manager is {package_manager}; the current Dockerfile generator requires npm with package-lock.json.")
             command = []
-    elif stack == "java" and package_manager == "maven":
+    elif stack == "java" and package_manager in ("maven", "gradle"):
         command = ["java", "-jar", "/app/app.jar"]
-        unknowns.append("Confirm the Maven build produces one executable Spring Boot JAR.")
+        build_system = "Gradle bootJar" if package_manager == "gradle" else "Maven package"
+        unknowns.append(f"Confirm the {build_system} build produces one executable Spring Boot JAR.")
     elif stack == "java":
-        unknowns.append(f"The detected Java build manager is {package_manager}; only Maven packaging is currently supported.")
+        unknowns.append(f"The detected Java build manager is {package_manager}; Maven and Gradle packaging are supported.")
     else:
         unknowns.append("Stack or framework is not supported for automatic startup command generation.")
 
@@ -52,6 +53,10 @@ def analyze(scan: dict) -> dict:
         "dependency_file": scan.get("dependency_file"),
         "entry_point": entry,
         "runtime_version": scan.get("runtime_version"),
+        "runtime_version_source": scan.get("runtime_version_source", "default"),
+        "runtime_constraint": scan.get("runtime_constraint", ""),
+        "build_tool_version": scan.get("build_tool_version", ""),
+        "gradle_wrapper": bool(scan.get("gradle_wrapper", False)),
         "port": port,
         "startup_command": command,
         "detected_services": scan.get("detected_services", []),

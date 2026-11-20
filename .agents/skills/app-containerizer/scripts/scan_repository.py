@@ -65,6 +65,10 @@ def scan(repo: Path) -> dict:
 
     stack = framework = manager = dependency = entry = runtime = "unknown"
     start_command: list[str] = []
+    runtime_source = "default"
+    runtime_constraint = ""
+    build_tool_version = ""
+    gradle_wrapper = False
 
     if any(path.endswith((".py", "requirements.txt", "pyproject.toml", "setup.py")) for path in lowered):
         stack = "python"
@@ -83,7 +87,37 @@ def scan(repo: Path) -> dict:
             (path for path in paths if Path(path).name in ("main.py", "app.py", "manage.py")),
             "unknown",
         )
-        runtime = "3.12"
+
+        # Prefer the declared Python constraint over a global default so the
+        # generated image cannot be older than the project's minimum version.
+        pyproject_path = next((repo / path for path in paths if Path(path).name == "pyproject.toml"), None)
+        if pyproject_path:
+            pyproject_text = _read_text(pyproject_path)
+            requires_match = re.search(
+                r"(?m)^\s*requires-python\s*=\s*['\"]([^'\"]+)['\"]",
+                pyproject_text,
+            )
+            poetry_match = re.search(
+                r"(?m)^\s*python\s*=\s*['\"]([^'\"]+)['\"]",
+                pyproject_text,
+            )
+            runtime_constraint = (requires_match or poetry_match).group(1) if (requires_match or poetry_match) else ""
+            version_match = re.search(r"(?:>=|~=|==|>|\^|~)\s*(3\.\d+)", runtime_constraint)
+            if version_match:
+                runtime = version_match.group(1)
+                if runtime_constraint.lstrip().startswith(">") and not runtime_constraint.lstrip().startswith(">="):
+                    minor = int(runtime.split(".")[1]) + 1
+                    runtime = f"3.{minor}"
+                runtime_source = "pyproject.toml"
+            else:
+                upper_match = re.search(r"(?:<=|<)\s*(3\.\d+)", runtime_constraint)
+                runtime = upper_match.group(1) if upper_match else "3.12"
+                if upper_match and runtime_constraint.lstrip().startswith("<") and not runtime_constraint.lstrip().startswith("<="):
+                    minor = max(0, int(runtime.split(".")[1]) - 1)
+                    runtime = f"3.{minor}"
+                runtime_source = "pyproject.toml" if upper_match else "default"
+        else:
+            runtime = "3.12"
 
     elif "package.json" in lowered:
         stack = "nodejs"
@@ -117,12 +151,55 @@ def scan(repo: Path) -> dict:
     elif any(name in lowered for name in ("pom.xml", "build.gradle", "build.gradle.kts")):
         stack = "java"
         framework = "spring-boot" if "spring-boot" in search_text else "java"
-        dependency = next(
-            path for path in paths
-            if Path(path).name in ("pom.xml", "build.gradle", "build.gradle.kts")
+
+        # Prefer a root Gradle manifest over nested sample Maven projects.
+        root_gradle = next(
+            (path for path in paths if Path(path).parent == Path(".")
+             and Path(path).name in ("build.gradle", "build.gradle.kts")),
+            None,
         )
-        manager = "maven" if "pom.xml" in lowered else "gradle"
+        root_maven = next(
+            (path for path in paths if Path(path).parent == Path(".") and Path(path).name == "pom.xml"),
+            None,
+        )
+        wrapper_properties = next(
+            (path for path in paths if path.endswith("gradle/wrapper/gradle-wrapper.properties")),
+            None,
+        )
+        gradle_wrapper = bool(wrapper_properties and "gradlew" in lowered)
+        if root_gradle and root_maven:
+            # A checked-in Gradle wrapper is authoritative when both manifests exist.
+            # Without that signal, preserve fail-closed behavior for ambiguous builds.
+            if gradle_wrapper:
+                manager, dependency = "gradle", root_gradle
+            else:
+                manager, dependency = "unknown", None
+        elif root_gradle:
+            manager, dependency = "gradle", root_gradle
+        elif root_maven:
+            manager, dependency = "maven", root_maven
+        else:
+            dependency = next(
+                path for path in paths
+                if Path(path).name in ("pom.xml", "build.gradle", "build.gradle.kts")
+            )
+            manager = "gradle" if Path(dependency).name.startswith("build.gradle") else "maven"
+
         runtime = "21"
+        build_text = _read_text(repo / dependency) if dependency else ""
+        java_match = (
+            re.search(r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)", build_text)
+            or re.search(r"VERSION_(\d+)", build_text)
+            or re.search(r"sourceCompatibility\s*=\s*['\"]?(?:VERSION_)?(\d+)", build_text)
+        )
+        if java_match:
+            runtime = java_match.group(1)
+
+        if wrapper_properties:
+            wrapper_text = _read_text(repo / wrapper_properties)
+            gradle_match = re.search(r"gradle-(\d+(?:\.\d+)+)-(?:bin|all)\.zip", wrapper_text)
+            if gradle_match:
+                build_tool_version = gradle_match.group(1)
 
     services: list[str] = []
     for name, pattern in (
@@ -142,6 +219,10 @@ def scan(repo: Path) -> dict:
         "entry_point": entry,
         "start_command": start_command,
         "runtime_version": runtime,
+        "runtime_version_source": runtime_source,
+        "runtime_constraint": runtime_constraint,
+        "build_tool_version": build_tool_version,
+        "gradle_wrapper": gradle_wrapper,
         "existing_dockerfile": any(Path(path).name.lower() == "dockerfile" for path in paths),
         "existing_compose": any(
             Path(path).name.lower() in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")

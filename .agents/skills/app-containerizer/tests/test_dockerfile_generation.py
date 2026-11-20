@@ -74,3 +74,44 @@ def test_generation_requires_approval(tmp_path):
     result = run(tmp_path, plan)
     assert result.returncode != 0
     assert not (tmp_path / "Dockerfile").exists()
+
+
+def test_generate_gradle_spring_boot_dockerfile(tmp_path):
+    plan = {
+        "stack": "java",
+        "framework": "spring-boot",
+        "package_manager": "gradle",
+        "dependency_file": "build.gradle",
+        "runtime_version": "17",
+        "build_tool_version": "9.5.1",
+        "startup_command": ["java", "-jar", "/app/app.jar"],
+        "port": 8080,
+    }
+    result = run(tmp_path, plan, "--approve")
+    assert result.returncode == 0, result.stderr
+    dockerfile = (tmp_path / "Dockerfile").read_text(encoding="utf-8")
+    assert "FROM gradle:9.5.1-jdk17 AS build" in dockerfile
+    assert "gradle --no-daemon bootJar -x test" in dockerfile
+    assert "! -name '*-plain.jar'" in dockerfile
+    assert "FROM eclipse-temurin:17-jre" in dockerfile
+    assert "COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar" in dockerfile
+    assert "USER app" in dockerfile
+    assert 'ENTRYPOINT ["java", "-jar"' in dockerfile
+
+
+def test_generate_python_dockerfile_uses_detected_runtime(tmp_path):
+    plan = {
+        "stack": "python",
+        "framework": "fastapi",
+        "package_manager": "uv",
+        "dependency_file": "uv.lock",
+        "runtime_version": "3.14",
+        "runtime_version_source": "pyproject.toml",
+        "runtime_constraint": ">=3.14,<4.0",
+        "startup_command": ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"],
+        "port": 8000,
+    }
+    result = run(tmp_path, plan, "--approve")
+    assert result.returncode == 0, result.stderr
+    dockerfile = (tmp_path / "Dockerfile").read_text(encoding="utf-8")
+    assert dockerfile.startswith("FROM python:3.14-slim")

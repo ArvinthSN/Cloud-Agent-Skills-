@@ -124,10 +124,9 @@ CMD {json.dumps(command)}
 
     if stack == "java":
         version = _runtime_version(plan.get("runtime_version"), "21")
-        if manager != "maven":
-            raise ValueError(f"Java package manager '{manager}' is not yet supported; Maven projects are required.")
-        _safe_dependency_path(plan.get("dependency_file"), {"pom.xml"})
-        return f"""FROM maven:3.9-eclipse-temurin-{version} AS build
+        if manager == "maven":
+            _safe_dependency_path(plan.get("dependency_file"), {"pom.xml"})
+            return f"""FROM maven:3.9-eclipse-temurin-{version} AS build
 WORKDIR /workspace
 COPY pom.xml ./
 RUN mvn -B -q dependency:go-offline
@@ -141,6 +140,26 @@ USER app
 EXPOSE {port}
 ENTRYPOINT {json.dumps(command)}
 """
+        if manager == "gradle":
+            # Use the Gradle version declared by the checked-in wrapper where possible.
+            # The scanner only reads metadata; Gradle is run later by an explicit image build.
+            _safe_dependency_path(plan.get("dependency_file"), {"build.gradle", "build.gradle.kts"})
+            gradle_version = _runtime_version(plan.get("build_tool_version"), "8.14")
+            return f"""FROM gradle:{gradle_version}-jdk{version} AS build
+WORKDIR /workspace
+COPY . .
+RUN gradle --no-daemon bootJar -x test
+# Exclude Spring Boot's plain JAR so only the executable bootJar enters the runtime stage.
+RUN set -eu; jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print -quit)"; test -n "$jar"; cp "$jar" /workspace/app.jar
+FROM eclipse-temurin:{version}-jre
+WORKDIR /app
+RUN groupadd --system app && useradd --system --gid app --create-home app
+COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar
+USER app
+EXPOSE {port}
+ENTRYPOINT {json.dumps(command)}
+"""
+        raise ValueError(f"Java package manager '{manager}' is not supported; Maven or Gradle is required.")
 
     raise ValueError(f"Unsupported or unknown stack: {stack}")
 
@@ -170,6 +189,7 @@ def main() -> None:
         parser.error(f"Existing files preserved: {existing}; use --overwrite only after review.")
 
     ignore = """.git
+.gradle
 .venv
 venv
 __pycache__
