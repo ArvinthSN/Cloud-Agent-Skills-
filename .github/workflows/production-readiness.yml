@@ -87,7 +87,7 @@ jobs:
         run: python .agents/production-readiness/terraform_smoke.py --output artifacts/terraform
       - name: Scan Terraform smoke fixture for HIGH and CRITICAL misconfiguration
         run: |
-          docker run --rm -v "$PWD/artifacts/terraform/fixture:/scan" aquasec/trivy:0.58.2 config \
+          docker run --rm -v "$PWD/artifacts/terraform/fixture:/scan" aquasec/trivy:0.58.2 config --skip-check-update \
             --severity HIGH,CRITICAL --exit-code 1 --format json --output /scan/trivy-config.json /scan
       - name: Upload Terraform evidence
         if: always()
@@ -107,7 +107,6 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          fetch-depth: 0
           persist-credentials: false
       - name: Scan repository working tree with Gitleaks
         run: |
@@ -117,7 +116,7 @@ jobs:
       - name: Scan repository IaC and configuration with Trivy
         run: |
           docker run --rm -v "$PWD:/repo:ro" -v "$PWD/artifacts/security:/reports" aquasec/trivy:0.58.2 fs /repo \
-            --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 \
+            --skip-check-update --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 \
             --format json --output /reports/trivy-filesystem.json \
             --skip-dirs .git --skip-dirs .venv --skip-dirs node_modules
       - name: Upload repository security evidence
