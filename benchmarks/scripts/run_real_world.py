@@ -174,7 +174,7 @@ def run_containerizer(target: dict[str, Any], repo: Path, app_dir: Path, out: Pa
     ) if first["return_code"] == 0 else {"return_code": 1, "status": "SKIPPED", "elapsed_seconds": 0}
     second_hash = digest(generated_paths) if second["return_code"] == 0 else None
     elapsed = time.perf_counter() - started
-    case_dir = out / "benchmark-workspace" / f"{target['id']}-container"
+    case_dir = out.parents[1] / "benchmark-workspace" / f"{target['id']}-container"
     copy_case_files(case_dir, [(generated_paths[0], "Dockerfile"), (generated_paths[1], ".dockerignore")])
     write_case_metadata(case_dir, first_hash, second_hash, elapsed)
     validation = run(
@@ -229,7 +229,7 @@ def run_infra(target: dict[str, Any], repo: Path, out: Path) -> dict[str, Any]:
     second_files = [p for p in second_dir.rglob("*") if p.is_file()] if second_dir.exists() else []
     second_hash = digest(second_files) if second["return_code"] == 0 else None
     elapsed = time.perf_counter() - started
-    case_dir = out / "benchmark-workspace" / f"{target['id']}-infra"
+    case_dir = out.parents[1] / "benchmark-workspace" / f"{target['id']}-infra"
     if first_dir.exists():
         shutil.copytree(first_dir, case_dir / "infra", dirs_exist_ok=True)
     write_case_metadata(case_dir, first_hash, second_hash, elapsed)
@@ -280,7 +280,7 @@ def run_pipeline(target: dict[str, Any], repo: Path, out: Path) -> dict[str, Any
     second_generated = [second_dir / "pipeline.yml", second_dir / "PIPELINE_NOTES.md"]
     first_hash = digest(generated)
     second_hash = digest(second_generated) if second["return_code"] == 0 else None
-    case_dir = out / "benchmark-workspace" / f"{target['id']}-pipeline"
+    case_dir = out.parents[1] / "benchmark-workspace" / f"{target['id']}-pipeline"
     copy_case_files(case_dir, [
         (first_dir / "pipeline.yml", ".github/workflows/pipeline.yml"),
         (first_dir / "PIPELINE_NOTES.md", "PIPELINE_NOTES.md"),
