@@ -43,7 +43,7 @@ jobs:
         run: |
           mkdir -p artifacts
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/artifacts:/reports" aquasec/trivy:0.58.2 image \
-            --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed \
+            --skip-check-update --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 --format json --output /reports/trivy-image.json \
             "${{ steps.runtime.outputs.image_tag }}"
       - name: Generate CycloneDX image SBOM
