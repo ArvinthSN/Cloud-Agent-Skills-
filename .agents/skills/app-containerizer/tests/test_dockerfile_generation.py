@@ -96,7 +96,7 @@ def test_generate_gradle_spring_boot_dockerfile(tmp_path):
     assert "FROM eclipse-temurin:17-jre" in dockerfile
     assert "COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar" in dockerfile
     assert "USER app" in dockerfile
-    assert "ENTRYPOINT [\\"java\\" " in dockerfile
+    assert 'ENTRYPOINT ["java", "-jar"' in dockerfile
 
 
 def test_generate_python_dockerfile_uses_detected_runtime(tmp_path):
