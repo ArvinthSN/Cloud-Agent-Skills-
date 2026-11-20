@@ -189,6 +189,7 @@ def main() -> None:
         parser.error(f"Existing files preserved: {existing}; use --overwrite only after review.")
 
     ignore = """.git
+.gradle
 .venv
 venv
 __pycache__
