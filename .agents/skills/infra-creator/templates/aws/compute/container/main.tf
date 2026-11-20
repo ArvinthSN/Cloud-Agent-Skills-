@@ -15,19 +15,19 @@ resource "aws_security_group" "alb" {
     from_port = 80
     to_port   = 80
     protocol  = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.allowed_ingress_cidrs
   }
   ingress {
     from_port = 443
     to_port   = 443
     protocol  = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.allowed_ingress_cidrs
   }
   egress {
     from_port = 0
     to_port   = 0
     protocol  = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.allowed_ingress_cidrs
   }
   tags = { Name = "${var.name_prefix}-alb-sg" }
   lifecycle { create_before_destroy = true }
@@ -47,7 +47,7 @@ resource "aws_security_group" "ecs" {
     from_port = 0
     to_port   = 0
     protocol  = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.allowed_ingress_cidrs
   }
   tags = { Name = "${var.name_prefix}-ecs-sg" }
   lifecycle { create_before_destroy = true }
@@ -55,10 +55,11 @@ resource "aws_security_group" "ecs" {
 
 resource "aws_lb" "this" {
   name               = substr("${var.name_prefix}-alb", 0, 32)
-  internal           = false
-  load_balancer_type = "application"
+  internal           = var.internal
+  load_balancer_type       = "application"
+  drop_invalid_header_fields = true
   security_groups    = [aws_security_group.alb.id]
-  subnets            = var.public_subnet_ids
+  subnets            = var.internal ? var.private_subnet_ids : var.public_subnet_ids
   tags               = { Name = "${var.name_prefix}-alb" }
 }
 
