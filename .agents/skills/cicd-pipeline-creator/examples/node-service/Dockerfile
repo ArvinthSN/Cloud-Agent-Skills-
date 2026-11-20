@@ -1,5 +1,8 @@
 FROM node:20-alpine
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
 COPY . .
-RUN npm install --production
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+USER app
 CMD ["node", "server.js"]
