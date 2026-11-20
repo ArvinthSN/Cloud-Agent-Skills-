@@ -90,6 +90,8 @@ def test_detect_gradle_wrapper_and_java_toolchain(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "gradlew").write_text("#!/bin/sh\n")
+    # When both root manifests exist, the checked-in Gradle wrapper identifies the active build.
+    (tmp_path / "pom.xml").write_text("<project />", encoding="utf-8")
     wrapper = tmp_path / "gradle" / "wrapper"
     wrapper.mkdir(parents=True)
     (wrapper / "gradle-wrapper.properties").write_text(
