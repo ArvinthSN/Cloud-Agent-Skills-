@@ -69,11 +69,11 @@ def test_output_file_returns_compact_receipt(tmp_path):
 def test_python_runtime_uses_pyproject_requires_python(tmp_path):
     # A minimum-version constraint must drive the image runtime, not the old global default.
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\\nrequires-python = ">=3.14,<4.0"\\n',
+        '[project]\nrequires-python = ">=3.14,<4.0"\n',
         encoding="utf-8",
     )
-    (tmp_path / "uv.lock").write_text("version = 1\\n", encoding="utf-8")
-    (tmp_path / "app.py").write_text("from fastapi import FastAPI\\napp = FastAPI()\\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n")
     result = run_scan(tmp_path)
     assert result.returncode == 0, result.stderr
     detected = json.loads(result.stdout)
@@ -85,20 +85,20 @@ def test_python_runtime_uses_pyproject_requires_python(tmp_path):
 
 def test_detect_gradle_wrapper_and_java_toolchain(tmp_path):
     (tmp_path / "build.gradle").write_text(
-        "plugins { id 'org.springframework.boot' version '3.4.0' }\\n"
-        "java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }\\n",
+        "plugins { id 'org.springframework.boot' version '3.4.0' }\n"
+        "java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }\n",
         encoding="utf-8",
     )
-    (tmp_path / "gradlew").write_text("#!/bin/sh\\n")
+    (tmp_path / "gradlew").write_text("#!/bin/sh\n")
     wrapper = tmp_path / "gradle" / "wrapper"
     wrapper.mkdir(parents=True)
     (wrapper / "gradle-wrapper.properties").write_text(
-        "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.5.1-bin.zip\\n",
+        "distributionUrl=https://services.gradle.org/distributions/gradle-9.5.1-bin.zip\n",
         encoding="utf-8",
     )
     (tmp_path / "src" / "main" / "java").mkdir(parents=True)
     (tmp_path / "src" / "main" / "java" / "Application.java").write_text(
-        "class Application {}\\n", encoding="utf-8"
+        "class Application {}\n", encoding="utf-8"
     )
     result = run_scan(tmp_path)
     assert result.returncode == 0, result.stderr
