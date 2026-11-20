@@ -181,3 +181,21 @@ The run directory contains:
 - .transaction/ — persistent backups retained until commit or successful rollback.
 
 The report status is completed, partial, blocked or failed. Each check is PASS, FAIL, WARNING, SKIPPED or NOT_RUN. Missing tools never count as successful validation.
+
+
+## Phase 4: optimization and continuous improvement
+
+Every execution now writes `telemetry.json` and includes an optimization summary in `execution-report.json`. It records total/per-skill duration, counts, and whether the deterministic project-context cache was hit or missed. Token counts are metadata-size estimates only (serialized handoff/artifact metadata divided by four), not actual model usage or billing. Artifact contents, source files, environment values and credentials are not collected.
+
+Generate a bounded repair plan after a failed execution:
+
+~~~bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py repair-plan \\
+  --run-dir ./.cloud-agent/runs/my-app \\
+  --max-attempts 1 \\
+  --attempts-used 0
+~~~
+
+The repair planner proposes at most two retries and defaults to one. Only explicitly recognized transient tool/network failures are eligible. Security, secret and policy findings are never retried automatically; deterministic validation failures escalate. The command writes `repair-plan.json` and never executes commands or edits project files. Any proposed retry still requires review and the normal execute/verification gates.
+
+For benchmark release checks, compare a reviewed baseline report with a candidate report using `benchmarks/scripts/regression_gate.py`. The gate blocks new security FAIL findings, PASS-to-non-PASS case regressions, correctness drops beyond the configured threshold, and aggregate score drops. Keep baselines versioned and based on an authorized, reviewed corpus; do not use synthetic fixture reports as production baselines.

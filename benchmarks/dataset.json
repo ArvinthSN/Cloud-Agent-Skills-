@@ -14,7 +14,7 @@
         "privileged:\\s*true",
         "AKIA[0-9A-Z]{16}",
         "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----",
-        "password\\s*[:=]\\s*['\\\"][^'\\\"]{6,}",
+        "password\\s*[:=]\\s*(?:['\\\"][^'\\\"]{6,}['\\\"]|[^\\s'\\\"]{6,})",
         "terraform\\s+(apply|destroy)"
       ],
       "warning_patterns": [
