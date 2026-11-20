@@ -306,7 +306,7 @@ def run_orchestrator(repo: Path, out: Path) -> dict[str, Any]:
     script = ROOT / ".agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py"
     run_dir = out / "orchestrator-run"
     plan = run(
-        "fastapi-full-stack: orchestrator plan",
+        "spring-sample-web-app: orchestrator plan",
         [PY, script, "plan", "--project", repo,
          "--goal", "Containerize this Spring Boot application and prepare AWS Terraform infrastructure",
          "--skills", "app-containerizer,infra-creator",
@@ -315,7 +315,7 @@ def run_orchestrator(repo: Path, out: Path) -> dict[str, Any]:
     if plan["return_code"] != 0:
         return {"status": "FAIL", "plan": plan}
     execute = run(
-        "fastapi-full-stack: orchestrator execute",
+        "spring-sample-web-app: orchestrator execute",
         [PY, script, "execute", "--run-dir", run_dir, "--approve", "--overwrite"],
         timeout=600,
     )
@@ -343,12 +343,12 @@ def make_dataset(path: Path) -> None:
         [".github/workflows/pipeline.yml", "PIPELINE_NOTES.md"],
         ["name:", "jobs:", "permissions:", "timeout-minutes:"])
     add("fastapi-full-stack-infra", "infra", "python-fastapi-aws",
-        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/README.md"],
+        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/versions.tf", "infra/terraform.tfvars.example"],
         ["module", "container_image", "provider", "terraform"])
     add("spring-sample-web-app-container", "container", "java-spring-maven",
         ["Dockerfile", ".dockerignore"], ["FROM", "WORKDIR", "USER", "EXPOSE", "ENTRYPOINT"])
     add("spring-sample-web-app-infra", "infra", "java-spring-maven-aws",
-        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/README.md"],
+        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/versions.tf", "infra/terraform.tfvars.example"],
         ["module", "container_image", "provider", "terraform"])
     data = {
         "schema_version": "1.0",
