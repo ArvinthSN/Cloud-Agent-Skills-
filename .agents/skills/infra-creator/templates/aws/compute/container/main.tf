@@ -27,7 +27,7 @@ resource "aws_security_group" "alb" {
     from_port = 0
     to_port   = 0
     protocol  = "-1"
-    cidr_blocks = var.allowed_ingress_cidrs
+    cidr_blocks = var.allowed_egress_cidrs
   }
   tags = { Name = "${var.name_prefix}-alb-sg" }
   lifecycle { create_before_destroy = true }
@@ -47,7 +47,7 @@ resource "aws_security_group" "ecs" {
     from_port = 0
     to_port   = 0
     protocol  = "-1"
-    cidr_blocks = var.allowed_ingress_cidrs
+    cidr_blocks = var.allowed_egress_cidrs
   }
   tags = { Name = "${var.name_prefix}-ecs-sg" }
   lifecycle { create_before_destroy = true }
