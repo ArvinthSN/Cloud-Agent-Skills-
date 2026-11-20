@@ -1,0 +1,341 @@
+{
+  "schema_version": "1.0",
+  "description": "20 deterministic benchmark scenarios; not evidence of real-world pass rates.",
+  "scoring": {
+    "weights": {
+      "correctness": 30,
+      "completeness": 25,
+      "security": 25,
+      "reproducibility": 10,
+      "efficiency": 10
+    },
+    "security_rules": {
+      "forbidden_patterns": [
+        "privileged:\\s*true",
+        "AKIA[0-9A-Z]{16}",
+        "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----",
+        "password\\s*[:=]\\s*['\\\"][^'\\\"]{6,}",
+        "terraform\\s+(apply|destroy)"
+      ],
+      "warning_patterns": [
+        ":latest\\b",
+        "curl\\s+[^|]+\\|\\s*(sudo\\s+)?(sh|bash)"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "python-fastapi",
+      "category": "container",
+      "stack": "python-fastapi",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "python-flask",
+      "category": "container",
+      "stack": "python-flask",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "python-django",
+      "category": "container",
+      "stack": "python-django",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "python-poetry",
+      "category": "container",
+      "stack": "python-poetry",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "python-uv",
+      "category": "container",
+      "stack": "python-uv",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "node-express",
+      "category": "container",
+      "stack": "node-express",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "node-nestjs",
+      "category": "container",
+      "stack": "node-nestjs",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "node-react",
+      "category": "container",
+      "stack": "node-react",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "node-nextjs",
+      "category": "container",
+      "stack": "node-nextjs",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "node-pnpm",
+      "category": "container",
+      "stack": "node-pnpm",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "java-spring-maven",
+      "category": "container",
+      "stack": "java-spring-maven",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "java-spring-gradle",
+      "category": "container",
+      "stack": "java-spring-gradle",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "go-api",
+      "category": "container",
+      "stack": "go",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "rust-api",
+      "category": "container",
+      "stack": "rust",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "python-node-monorepo",
+      "category": "container",
+      "stack": "monorepo",
+      "expected_artifacts": [
+        "Dockerfile"
+      ],
+      "expected_signals": [
+        "FROM",
+        "WORKDIR",
+        "COPY"
+      ]
+    },
+    {
+      "id": "cicd-python",
+      "category": "cicd",
+      "stack": "python",
+      "expected_artifacts": [
+        ".github/workflows/pipeline.yml"
+      ],
+      "expected_signals": [
+        "name:",
+        "on:",
+        "jobs:"
+      ]
+    },
+    {
+      "id": "cicd-node",
+      "category": "cicd",
+      "stack": "node",
+      "expected_artifacts": [
+        ".github/workflows/pipeline.yml"
+      ],
+      "expected_signals": [
+        "name:",
+        "on:",
+        "jobs:"
+      ]
+    },
+    {
+      "id": "cicd-java",
+      "category": "cicd",
+      "stack": "java",
+      "expected_artifacts": [
+        ".github/workflows/pipeline.yml"
+      ],
+      "expected_signals": [
+        "name:",
+        "on:",
+        "jobs:"
+      ]
+    },
+    {
+      "id": "cicd-monorepo",
+      "category": "cicd",
+      "stack": "monorepo",
+      "expected_artifacts": [
+        ".github/workflows/pipeline.yml"
+      ],
+      "expected_signals": [
+        "name:",
+        "on:",
+        "jobs:"
+      ]
+    },
+    {
+      "id": "infra-aws",
+      "category": "infra",
+      "stack": "aws",
+      "expected_artifacts": [
+        "infra/main.tf"
+      ],
+      "expected_signals": [
+        "terraform",
+        "resource"
+      ]
+    },
+    {
+      "id": "infra-azure",
+      "category": "infra",
+      "stack": "azure",
+      "expected_artifacts": [
+        "infra/main.tf"
+      ],
+      "expected_signals": [
+        "terraform",
+        "resource"
+      ]
+    },
+    {
+      "id": "infra-gcp",
+      "category": "infra",
+      "stack": "gcp",
+      "expected_artifacts": [
+        "infra/main.tf"
+      ],
+      "expected_signals": [
+        "terraform",
+        "resource"
+      ]
+    },
+    {
+      "id": "e2e-python-cloud",
+      "category": "end_to_end",
+      "stack": "python-aws",
+      "expected_artifacts": [
+        "Dockerfile",
+        ".github/workflows/pipeline.yml",
+        "infra/main.tf"
+      ],
+      "expected_signals": [
+        "FROM",
+        "jobs:",
+        "terraform"
+      ]
+    },
+    {
+      "id": "e2e-node-cloud",
+      "category": "end_to_end",
+      "stack": "node-gcp",
+      "expected_artifacts": [
+        "Dockerfile",
+        ".github/workflows/pipeline.yml",
+        "infra/main.tf"
+      ],
+      "expected_signals": [
+        "FROM",
+        "jobs:",
+        "terraform"
+      ]
+    }
+  ]
+}
