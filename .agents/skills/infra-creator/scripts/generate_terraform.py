@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass, field
@@ -337,6 +338,36 @@ def _variables_block(
         """
     return common + provider_vars + database
 
+
+
+
+def _format_terraform(output_dir: Path) -> None:
+    """Format generated HCL when Terraform is available; never run init or provision."""
+    terraform = shutil.which("terraform")
+    if not terraform:
+        logger.warning(
+            "Terraform CLI is unavailable; generated HCL was not auto-formatted. "
+            "Run terraform fmt -recursive before validation."
+        )
+        return
+
+    try:
+        result = subprocess.run(
+            [terraform, "fmt", "-recursive"],
+            cwd=str(output_dir),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Could not format generated Terraform safely: {exc}") from exc
+
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "terraform fmt failed").strip()
+        raise RuntimeError(f"terraform fmt -recursive failed: {details}")
+    if result.stdout.strip():
+        logger.info("Formatted Terraform files:\n%s", result.stdout.strip())
 
 
 def generate_project(
@@ -703,6 +734,7 @@ def generate_project(
         ```
         """,
     )
+    _format_terraform(output_dir)
     logger.info("Terraform project (%s) generated at %s", provider, output_dir)
 
 

@@ -1,0 +1,54 @@
+name: Real-world Cloud Agent Skills baseline
+
+on:
+  push:
+    branches: ["review/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-world-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-world-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout Cloud Agent Skills
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install validator dependencies
+        run: python -m pip install --upgrade pip pyyaml jsonschema
+
+      - name: Install Terraform CLI for static validation
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      - name: Validate benchmark dataset
+        run: python benchmarks/scripts/benchmark.py --validate-only
+
+      - name: Run pinned public repository benchmark
+        run: python benchmarks/scripts/run_real_world.py --output-dir artifacts/real-world-baseline
+
+      - name: Upload baseline reports and generated artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cloud-agent-skills-real-world-baseline
+          path: artifacts/real-world-baseline/
+          if-no-files-found: warn
+          retention-days: 30

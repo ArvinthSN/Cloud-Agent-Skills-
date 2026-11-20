@@ -47,9 +47,16 @@ def score_case(case: dict[str, Any], workspace: Path, rules: dict[str, Any]) -> 
         if content is None: missing.append(relative)
         else: contents[relative] = content
     combined = "\n".join(contents.values())
+    metadata_text = safe_read(repo, "benchmark-metadata.json") if repo.is_dir() else None
+    metadata = json.loads(metadata_text) if metadata_text is not None else {}
+    validation_passed = metadata.get("validation_passed")
     expected = case["expected_signals"]
     found = [signal for signal in expected if signal.casefold() in combined.casefold()]
     correctness = round(100 * len(found) / len(expected), 2) if expected else (100.0 if contents else 0.0)
+    # A generated artifact that fails its native/static validator is not correct,
+    # even if it contains the expected marker strings.
+    if validation_passed is False:
+        correctness = 0.0
     completeness = round(100 * (len(case["expected_artifacts"])-len(missing))/len(case["expected_artifacts"]), 2)
     findings = []
     for pattern in rules.get("forbidden_patterns", []):
@@ -57,8 +64,6 @@ def score_case(case: dict[str, Any], workspace: Path, rules: dict[str, Any]) -> 
     for pattern in rules.get("warning_patterns", []):
         if re.search(pattern, combined, re.I | re.M): findings.append({"severity":"WARNING","rule":pattern})
     security = 0.0 if any(f["severity"]=="FAIL" for f in findings) else (80.0 if findings else (100.0 if contents else 0.0))
-    metadata_text = safe_read(repo, "benchmark-metadata.json") if repo.is_dir() else None
-    metadata = json.loads(metadata_text) if metadata_text is not None else {}
     first, second = metadata.get("first_run_sha256"), metadata.get("second_run_sha256")
     reproducibility = (100.0 if first == second else 0.0) if isinstance(first,str) and isinstance(second,str) else None
     elapsed = metadata.get("elapsed_seconds")
@@ -68,10 +73,10 @@ def score_case(case: dict[str, Any], workspace: Path, rules: dict[str, Any]) -> 
     measured=sum(weights[k] for k,v in dimensions.items() if v is not None)
     score=sum(weights[k]*v for k,v in dimensions.items() if v is not None)/measured if measured else None
     return {"case_id":case["id"],"category":case["category"],"stack":case["stack"],
-      "status":"PASS" if not missing and not any(f["severity"]=="FAIL" for f in findings) else "FAIL",
+      "status":"PASS" if not missing and len(found)==len(expected) and validation_passed is not False and not any(f["severity"]=="FAIL" for f in findings) else "FAIL",
       "dimensions":dimensions,"weighted_score":round(score,2) if score is not None else None,
       "measured_weight_percent":measured,"missing_artifacts":missing,"matched_signals":found,
-      "expected_signal_count":len(expected),"security_findings":findings}
+      "expected_signal_count":len(expected),"validation_passed":validation_passed,"security_findings":findings}
 
 def run_benchmark(dataset_path: Path, workspace: Path, output: Path) -> dict[str, Any]:
     data=load_dataset(dataset_path); rules=dict(data["scoring"].get("security_rules",{})); rules["_weights"]=data["scoring"]["weights"]

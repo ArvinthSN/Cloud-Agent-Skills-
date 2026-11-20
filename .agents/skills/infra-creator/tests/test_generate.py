@@ -228,3 +228,63 @@ def test_generated_terraform_passes_native_validation_when_cli_available(tmp_pat
     assert result.init_ok is True, json.dumps(result.to_dict(), indent=2)
     assert result.validate_ok is True, json.dumps(result.to_dict(), indent=2)
     assert result.success is True, json.dumps(result.to_dict(), indent=2)
+
+@pytest.mark.parametrize("provider", SUPPORTED_PROVIDERS)
+def test_generated_terraform_templates_use_valid_multiline_hcl(tmp_path, provider):
+    """HCL uses newlines between block attributes; semicolons are not separators."""
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, provider)
+    output = tmp_path / provider / "infra"
+    generate_project(output, plan, project_name="hcl-syntax-check")
+
+    terraform_files = sorted(output.rglob("*.tf"))
+    assert terraform_files, "Expected generated Terraform files"
+
+    invalid_lines = [
+        f"{path.relative_to(output)}:{line_number}: {line}"
+        for path in terraform_files
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if ";" in line and not line.lstrip().startswith("#")
+    ]
+    assert not invalid_lines, "Invalid HCL statement separators found:\\n" + "\\n".join(invalid_lines)
+
+def test_generator_formats_output_when_terraform_is_available(monkeypatch, tmp_path):
+    import generate_terraform
+    from types import SimpleNamespace
+
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, "aws")
+    output = tmp_path / "formatted-infra"
+    calls = []
+
+    monkeypatch.setattr(generate_terraform.shutil, "which", lambda name: "/usr/bin/terraform")
+
+    def fake_run(command, cwd, capture_output, text, timeout, check):
+        calls.append((command, Path(cwd), timeout, check))
+        return SimpleNamespace(returncode=0, stdout="main.tf\\n", stderr="")
+
+    monkeypatch.setattr(generate_terraform.subprocess, "run", fake_run)
+    generate_project(output, plan, project_name="format-check")
+
+    assert len(calls) == 1
+    command, cwd, timeout, check = calls[0]
+    assert command == ["/usr/bin/terraform", "fmt", "-recursive"]
+    assert cwd == output.resolve()
+    assert timeout == 60
+    assert check is False
+
+
+def test_generator_skips_auto_format_when_terraform_is_missing(monkeypatch, tmp_path):
+    import generate_terraform
+
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, "aws")
+    output = tmp_path / "no-terraform"
+    monkeypatch.setattr(generate_terraform.shutil, "which", lambda _: None)
+
+    generate_project(output, plan, project_name="no-terraform")
+
+    assert (output / "main.tf").is_file()
