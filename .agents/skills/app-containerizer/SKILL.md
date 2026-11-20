@@ -18,7 +18,7 @@ Create reproducible container artifacts from verified repository facts.
 |---|---|---|
 | Python | pip (requirements/pyproject), Poetry, uv | Missing manifest or unresolved startup command |
 | Node.js | npm with package-lock.json | pnpm/yarn or missing lockfile/start command |
-| Java | Maven executable JAR | Gradle or unconfirmed non-executable JAR |
+| Java | Maven executable JAR; Gradle Spring Boot `bootJar` | Unknown build manager, missing build manifest, or unconfirmed executable JAR |
 
 Flask uses the detected module path and requires Gunicorn as a project runtime dependency. Django generation stops until the WSGI module is confirmed. The generator must not replace an unsupported package manager with npm or pip.
 
@@ -54,3 +54,10 @@ python scripts/validate_container.py --path ./app
 When `scan_repository.py --output <path>` is used, the full scan is saved to that JSON artifact and stdout returns only a compact receipt. Omit `--output` when a downstream tool explicitly needs the full JSON on stdout.
 
 Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired. The Docker build executes Dockerfile instructions inside the build environment; review the Dockerfile first and ensure required base images/dependencies are already cached because network access is disabled.
+
+## Runtime and build-tool detection
+
+- **Python:** Read `project.requires-python` (PEP 621) or Poetry's Python constraint from `pyproject.toml`. For a range such as `>=3.14,<4.0`, select the declared lower bound (`3.14`) for the base image and preserve the original constraint in the plan. If no usable constraint is present, use the documented fallback (`3.12`) and mark the source as default.
+- **Java:** Select the root Gradle build when present; otherwise select the root Maven build. Read Java toolchain/source compatibility from the selected build file. For Gradle, read the version from `gradle/wrapper/gradle-wrapper.properties` when available; otherwise use the generator's documented fallback.
+- **Gradle Spring Boot:** Build `bootJar` in a Gradle/JDK build stage, exclude the `*-plain.jar` artifact, and copy the executable JAR into a minimal JRE runtime stage. The Dockerfile generator never runs Gradle itself.
+- If multiple root build systems or non-standard packaging make the target ambiguous, review the generated plan and stop rather than guessing.
