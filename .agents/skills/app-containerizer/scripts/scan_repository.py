@@ -103,7 +103,7 @@ def scan(repo: Path) -> dict:
                 pyproject_text,
             )
             runtime_constraint = (requires_match or poetry_match).group(1) if (requires_match or poetry_match) else ""
-            version_match = re.search(r"(?:>=|~=|==|>)\s*(3\.\d+)", runtime_constraint)
+            version_match = re.search(r"(?:>=|~=|==|>|\^|~)\s*(3\.\d+)", runtime_constraint)
             if version_match:
                 runtime = version_match.group(1)
                 if runtime_constraint.lstrip().startswith(">") and not runtime_constraint.lstrip().startswith(">="):
@@ -114,6 +114,9 @@ def scan(repo: Path) -> dict:
                 # Upper-bound-only declarations still constrain the safe choice.
                 upper_match = re.search(r"(?:<=|<)\s*(3\.\d+)", runtime_constraint)
                 runtime = upper_match.group(1) if upper_match else "3.12"
+                if upper_match and runtime_constraint.lstrip().startswith("<") and not runtime_constraint.lstrip().startswith("<="):
+                    minor = max(0, int(runtime.split(".")[1]) - 1)
+                    runtime = f"3.{minor}"
                 runtime_source = "pyproject.toml" if upper_match else "default"
         else:
             runtime = "3.12"
@@ -162,7 +165,10 @@ def scan(repo: Path) -> dict:
             (path for path in paths if Path(path).parent == Path(".") and Path(path).name == "pom.xml"),
             None,
         )
-        if root_gradle:
+        if root_gradle and root_maven:
+            # Two root build systems are ambiguous: do not silently pick one.
+            manager, dependency = "unknown", None
+        elif root_gradle:
             manager, dependency = "gradle", root_gradle
         elif root_maven:
             manager, dependency = "maven", root_maven
@@ -174,7 +180,7 @@ def scan(repo: Path) -> dict:
             manager = "gradle" if Path(dependency).name.startswith("build.gradle") else "maven"
 
         runtime = "21"
-        build_text = _read_text(repo / dependency)
+        build_text = _read_text(repo / dependency) if dependency else ""
         java_match = (
             re.search(r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)", build_text)
             or re.search(r"VERSION_(\d+)", build_text)
