@@ -4,7 +4,7 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"benchmarks"/"scripts"))
 from benchmark import load_dataset, run_benchmark, score_case
 
-def test_dataset_has_twenty_unique_cases():
+def test_dataset_has_twenty_four_unique_cases():
     data=load_dataset(ROOT/"benchmarks"/"dataset.json")
     assert len(data["cases"])==24
     assert len({c["id"] for c in data["cases"]})==24

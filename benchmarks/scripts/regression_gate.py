@@ -4,26 +4,51 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
 
 
+def _score(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{label} must be a finite number")
+    if not 0 <= value <= 100:
+        raise ValueError(f"{label} must be between 0 and 100")
+    return float(value)
+
+
 def _load(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} contains invalid JSON: {exc}") from exc
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
         raise ValueError(f"{path} is not a benchmark report with a results array")
-    cases = {}
-    for item in value["results"]:
+    cases: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(value["results"]):
+        if not isinstance(item, dict):
+            raise ValueError(f"{path} result at index {index} must be an object")
         case_id = item.get("case_id")
         if not isinstance(case_id, str) or not case_id or case_id in cases:
             raise ValueError(f"{path} contains a missing or duplicate case_id")
-        if not isinstance(item.get("dimensions"), dict):
-            raise ValueError(f"{path} case {case_id} has no dimensions")
+        dimensions = item.get("dimensions")
+        if not isinstance(dimensions, dict):
+            raise ValueError(f"{path} case {case_id} has no dimensions object")
+        _score(dimensions.get("correctness"), f"{path} case {case_id} correctness")
+        if item.get("status") not in {"PASS", "FAIL"}:
+            raise ValueError(f"{path} case {case_id} status must be PASS or FAIL")
+        findings = item.get("security_findings")
+        if not isinstance(findings, list) or any(
+            not isinstance(finding, dict) or finding.get("severity") not in {"FAIL", "WARNING"}
+            for finding in findings
+        ):
+            raise ValueError(f"{path} case {case_id} security_findings must be a list of valid findings")
         cases[case_id] = item
     if not cases:
         raise ValueError(f"{path} contains no benchmark cases")
-    return {"raw": value, "cases": cases}
+    aggregate = _score(value.get("average_weighted_score"), f"{path} average_weighted_score")
+    return {"raw": value, "cases": cases, "aggregate_score": aggregate}
 
 
 def compare_reports(
@@ -33,8 +58,14 @@ def compare_reports(
     max_score_drop: float = 3.0,
     max_correctness_drop: float = 0.0,
 ) -> dict[str, Any]:
-    if max_score_drop < 0 or max_correctness_drop < 0:
-        raise ValueError("Regression thresholds must be non-negative")
+    if (
+        isinstance(max_score_drop, bool) or not isinstance(max_score_drop, (int, float))
+        or not math.isfinite(max_score_drop) or max_score_drop < 0
+        or isinstance(max_correctness_drop, bool) or not isinstance(max_correctness_drop, (int, float))
+        or not math.isfinite(max_correctness_drop) or max_correctness_drop < 0
+    ):
+        raise ValueError("Regression thresholds must be finite, non-negative numbers")
+
     baseline, current = _load(baseline_path), _load(current_path)
     base_cases, current_cases = baseline["cases"], current["cases"]
     if set(base_cases) != set(current_cases):
@@ -43,38 +74,45 @@ def compare_reports(
     failures, comparisons = [], []
     for case_id in sorted(base_cases):
         old, new = base_cases[case_id], current_cases[case_id]
-        old_dims, new_dims = old["dimensions"], new["dimensions"]
-        old_correct = old_dims.get("correctness")
-        new_correct = new_dims.get("correctness")
-        correctness_drop = None
-        if isinstance(old_correct, (int, float)) and isinstance(new_correct, (int, float)):
-            correctness_drop = round(old_correct - new_correct, 2)
-            if correctness_drop > max_correctness_drop:
-                failures.append({"case_id": case_id, "gate": "correctness", "drop": correctness_drop,
-                                 "threshold": max_correctness_drop})
-        old_status, new_status = old.get("status"), new.get("status")
+        old_correct = _score(old["dimensions"]["correctness"], f"baseline {case_id} correctness")
+        new_correct = _score(new["dimensions"]["correctness"], f"current {case_id} correctness")
+        correctness_drop = round(old_correct - new_correct, 2)
+        if correctness_drop > max_correctness_drop:
+            failures.append({
+                "case_id": case_id, "gate": "correctness",
+                "drop": correctness_drop, "threshold": max_correctness_drop,
+            })
+        old_status, new_status = old["status"], new["status"]
         if old_status == "PASS" and new_status != "PASS":
-            failures.append({"case_id": case_id, "gate": "case_status", "baseline": old_status, "current": new_status})
-        security = [finding for finding in new.get("security_findings", []) if finding.get("severity") == "FAIL"]
+            failures.append({
+                "case_id": case_id, "gate": "case_status",
+                "baseline": old_status, "current": new_status,
+            })
+        security = [finding for finding in new["security_findings"] if finding["severity"] == "FAIL"]
         if security:
             failures.append({"case_id": case_id, "gate": "security", "finding_count": len(security)})
-        comparisons.append({"case_id": case_id, "correctness_drop": correctness_drop,
-                            "baseline_score": old.get("weighted_score"), "current_score": new.get("weighted_score")})
+        comparisons.append({
+            "case_id": case_id,
+            "correctness_drop": correctness_drop,
+            "baseline_score": old.get("weighted_score"),
+            "current_score": new.get("weighted_score"),
+        })
 
-    old_score = baseline["raw"].get("average_weighted_score")
-    new_score = current["raw"].get("average_weighted_score")
-    score_drop = None
-    if isinstance(old_score, (int, float)) and isinstance(new_score, (int, float)):
-        score_drop = round(old_score - new_score, 2)
-        if score_drop > max_score_drop:
-            failures.append({"gate": "aggregate_score", "drop": score_drop, "threshold": max_score_drop})
+    score_drop = round(baseline["aggregate_score"] - current["aggregate_score"], 2)
+    if score_drop > max_score_drop:
+        failures.append({
+            "gate": "aggregate_score", "drop": score_drop, "threshold": max_score_drop,
+        })
 
     return {
         "schema_version": "1.0",
         "status": "FAIL" if failures else "PASS",
         "baseline": str(baseline_path),
         "current": str(current_path),
-        "thresholds": {"max_score_drop": max_score_drop, "max_correctness_drop": max_correctness_drop},
+        "thresholds": {
+            "max_score_drop": max_score_drop,
+            "max_correctness_drop": max_correctness_drop,
+        },
         "aggregate_score_drop": score_drop,
         "case_count": len(comparisons),
         "failures": failures,
@@ -91,12 +129,15 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("regression-report.json"))
     args = parser.parse_args()
     try:
-        report = compare_reports(args.baseline, args.current,
-                                 max_score_drop=args.max_score_drop,
-                                 max_correctness_drop=args.max_correctness_drop)
+        report = compare_reports(
+            args.baseline,
+            args.current,
+            max_score_drop=args.max_score_drop,
+            max_correctness_drop=args.max_correctness_drop,
+        )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"Regression gate error: {exc}", file=sys.stderr)
         return 2
     print(f"Regression gate: {report['status']}; failures={len(report['failures'])}; report={args.output}")

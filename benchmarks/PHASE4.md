@@ -19,7 +19,7 @@ python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py repa
   --attempts-used 0
 ~~~
 
-The controller proposes at most two retries (one by default) and only for explicit transient tool/network failure markers. Security, secret and policy failures are never retryable. Unknown or deterministic validation failures escalate. The command writes `repair-plan.json`; it does not edit files, run shell commands, or bypass the existing approval, transaction and verification gates. After an approved repair/retry, run verification again.
+The controller proposes at most two retries across the entire execution run (one by default), not per failed check, and only for explicit transient tool/network failure markers. Security, secret and policy failures are never retryable. Unknown or deterministic validation failures escalate. The command writes `repair-plan.json`; it does not edit files, run shell commands, or bypass the existing approval, transaction and verification gates. After an approved repair/retry, run verification again.
 
 ## Benchmark regression gate
 
@@ -34,6 +34,6 @@ python benchmarks/scripts/regression_gate.py \
   --output ./regression-report.json
 ~~~
 
-The gate fails on any security FAIL finding, a case changing from PASS to non-PASS, a correctness decline beyond the configured threshold, or an aggregate score drop beyond the configured threshold. Both reports must contain the same case IDs. Exit codes: 0 pass, 1 regression, 2 invalid inputs.
+The gate fails on any security FAIL finding, a case changing from PASS to non-PASS, a correctness decline beyond the configured threshold, or an aggregate score drop beyond the configured threshold. Both reports must contain the same case IDs and valid finite correctness/aggregate scores from 0–100. Missing or malformed metrics/findings are rejected as invalid input (fail closed), rather than silently treated as no regression. Exit codes: 0 pass, 1 regression, 2 invalid inputs.
 
 Do not commit an unreviewed or synthetic report as a production baseline. Establish a baseline from a versioned, authorized repository corpus and preserve the benchmark dataset, skill commit, runtime versions and reports together.

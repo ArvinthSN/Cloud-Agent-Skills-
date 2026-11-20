@@ -29,13 +29,17 @@ def build_repair_plan(
     failures = [item for item in execution_report.get("checks", []) if item.get("status") == "FAIL"]
     proposals = []
     escalations = []
+    attempts_remaining = max_attempts - attempts_used
     for item in failures:
         name = str(item.get("name", "unknown"))
         detail = str(item.get("detail", ""))
         identity = (name + " " + detail).casefold()
         if any(marker in identity for marker in NEVER_RETRY_MARKERS):
-            escalations.append({"check": name, "reason": "Security or policy findings require human review; automatic retry is prohibited."})
-        elif any(marker in identity for marker in TRANSIENT_MARKERS) and attempts_used < max_attempts:
+            escalations.append({
+                "check": name,
+                "reason": "Security or policy findings require human review; automatic retry is prohibited.",
+            })
+        elif any(marker in identity for marker in TRANSIENT_MARKERS) and attempts_remaining > 0:
             proposals.append({
                 "check": name,
                 "action": "retry_same_step_once",
@@ -43,10 +47,11 @@ def build_repair_plan(
                 "requires_approval": True,
                 "must_rerun_verification": True,
             })
+            attempts_remaining -= 1
         else:
             escalations.append({
                 "check": name,
-                "reason": "Failure is not classified as safely retryable or the retry budget is exhausted.",
+                "reason": "Failure is not classified as safely retryable or the run-level retry budget is exhausted.",
             })
 
     if not failures:
@@ -65,9 +70,11 @@ def build_repair_plan(
         "policy": {
             "max_attempts": max_attempts,
             "attempts_used": attempts_used,
-            "attempts_remaining": max_attempts - attempts_used,
+            "attempts_remaining": attempts_remaining,
+            "proposed_retries": len(proposals),
             "automatic_file_mutation": False,
             "security_failures_retryable": False,
+            "budget_scope": "entire_execution_run",
         },
         "proposals": proposals,
         "escalations": escalations,

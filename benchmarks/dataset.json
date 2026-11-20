@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "description": "20 deterministic benchmark scenarios; not evidence of real-world pass rates.",
+  "description": "24 deterministic benchmark scenarios; not evidence of real-world pass rates.",
   "scoring": {
     "weights": {
       "correctness": 30,
