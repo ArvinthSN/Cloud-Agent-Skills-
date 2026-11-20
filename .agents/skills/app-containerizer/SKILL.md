@@ -29,7 +29,7 @@ Flask uses the detected module path and requires Gunicorn as a project runtime d
 4. Present stack, entry point, runtime, package manager, port, startup command, services and unknowns.
 5. Obtain approval before writing. Never overwrite Docker assets without explicit approval and --overwrite.
 6. Generate Dockerfile and .dockerignore. Generate Compose only for services explicitly selected by the user.
-7. Run static validation. Run docker build only when requested and available.
+7. Run static validation and Hadolint when installed. Run Docker build only with explicit --build approval; the build uses network=none, does not pull images and removes its temporary image.
 8. Report artifacts and checks using PASS, FAIL, WARNING, SKIPPED or NOT_RUN.
 
 ## Safety and correctness
@@ -53,4 +53,4 @@ python scripts/validate_container.py --path ./app
 
 When `scan_repository.py --output <path>` is used, the full scan is saved to that JSON artifact and stdout returns only a compact receipt. Omit `--output` when a downstream tool explicitly needs the full JSON on stdout.
 
-Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired.
+Add --overwrite only after reviewing existing files. Add --build only when an actual Docker build is desired. The Docker build executes Dockerfile instructions inside the build environment; review the Dockerfile first and ensure required base images/dependencies are already cached because network access is disabled.

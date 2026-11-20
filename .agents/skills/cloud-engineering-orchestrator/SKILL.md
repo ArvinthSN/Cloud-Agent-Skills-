@@ -64,6 +64,52 @@ Every plan now writes:
 
 The execution plan references both artifacts, records the architecture classification and confidence, and each specialist handoff carries a compact reference to the architecture profile. Confidence is a deterministic evidence score, not a statistical guarantee. Review the evidence and uncertainties before approval.
 
+
+## Phase 2: artifact verification
+
+Every successful generation now enters a verification gate before the output transaction is committed.
+
+- Artifact presence and safe-path checks run for every declared output.
+- Container validation runs static checks and Hadolint when installed.
+- Pipeline validation runs the platform policy validator and available native tools (actionlint, CircleCI CLI or Groovy compiler).
+- Terraform validation runs provider-aware policy checks plus fmt/init/validate when Terraform is installed.
+- Available security tools run Gitleaks (secrets), Trivy (filesystem misconfiguration/secrets and local image vulnerability/secret scans after an approved Docker build) and Checkov (Terraform policy).
+- Missing optional tools are reported as NOT_RUN, never as PASS. Verification reports use PASS, FAIL, WARNING, SKIPPED and NOT_RUN.
+
+A FAIL in a mandatory verification check marks the affected workflow as failed and triggers the existing output transaction rollback. Missing optional tools and warnings are recorded and produce a partial verification status without pretending the artifacts are fully verified.
+
+### Explicit execution of build and plan checks
+
+Docker builds and Terraform plans are opt-in because they execute project-controlled build instructions or provider code:
+
+~~~bash
+# Default: static checks and available security/native validators
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \\
+  --run-dir ./.cloud-agent/runs/my-app \\
+  --approve
+
+# Explicitly build a local image and generate an isolated Terraform plan
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \\
+  --run-dir ./.cloud-agent/runs/my-app \\
+  --approve --docker-build --terraform-plan
+~~~
+
+- Docker uses `--network=none`, does not pull base images, and removes the temporary image after a successful build. The required base images and dependencies must already be cached locally.
+- Terraform planning uses a temporary copy containing Terraform source and lock files, `init -backend=false`, `plan -refresh=false -lock=false`, no input, and a scrubbed process environment without cloud credential variables. Provider downloads may still require network access. Terraform provider plugins and external data sources can execute code; only enable this for reviewed Terraform.
+- Neither operation applies infrastructure, deploys services, pushes images or publishes artifacts.
+
+### Re-run verification
+
+After a committed execution, you can re-run verification with stronger optional checks:
+
+~~~bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py verify \\
+  --run-dir ./.cloud-agent/runs/my-app \\
+  --docker-build --terraform-plan
+~~~
+
+This writes `verification-report.json`. A re-run does not rewrite or roll back already committed project files; review a failed report and create a new approved execution if artifacts need regeneration.
+
 ## Commands
 
 ### plan

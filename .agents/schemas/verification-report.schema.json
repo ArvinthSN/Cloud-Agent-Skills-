@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArvinthSN/Cloud-Agent-Skills-/schemas/verification-report.schema.json",
+  "title": "Cloud Agent Skills verification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "project_root", "status", "requested_verifications", "summary", "checks", "generated_at"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "project_root": {"type": "string", "minLength": 1},
+    "status": {"enum": ["completed", "partial", "failed"]},
+    "requested_verifications": {
+      "type": "object", "additionalProperties": false,
+      "required": ["docker_build", "terraform_plan"],
+      "properties": {"docker_build": {"type": "boolean"}, "terraform_plan": {"type": "boolean"}}
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["FAIL", "NOT_RUN", "PASS", "SKIPPED", "WARNING"],
+      "properties": {
+        "FAIL": {"type": "integer", "minimum": 0},
+        "NOT_RUN": {"type": "integer", "minimum": 0},
+        "PASS": {"type": "integer", "minimum": 0},
+        "SKIPPED": {"type": "integer", "minimum": 0},
+        "WARNING": {"type": "integer", "minimum": 0}
+      }
+    },
+    "checks": {
+      "type": "array", "maxItems": 200,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["skill", "category", "name", "status", "tool", "detail"],
+        "properties": {
+          "skill": {"type": "string", "minLength": 1},
+          "category": {"enum": ["artifact", "static", "native", "build", "plan", "security", "secrets", "iac"]},
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN"]},
+          "tool": {"type": "string", "minLength": 1},
+          "detail": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"}
+  }
+}

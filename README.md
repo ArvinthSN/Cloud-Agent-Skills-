@@ -108,3 +108,20 @@ Use `--skills auto` to enable goal-driven selection. Supply `--platform` when re
 
 Each plan includes `architecture-profile.json` and `skill-selection.json` alongside the execution plan and versioned specialist handoffs. Architecture confidence is an evidence-based heuristic and must be reviewed before approving generation.
 
+
+## Phase 2: output verification
+
+The orchestrator now verifies generated artifacts before committing its output transaction. It checks artifact presence, runs the existing container/CI/Terraform validators, invokes available native validators and automatically uses installed Gitleaks, Trivy and Checkov scanners. Trivy also scans a locally built image when an approved Docker build is requested. Missing optional tools are recorded as `NOT_RUN`, never as a pass. Mandatory verification failures trigger the existing rollback mechanism.
+
+Docker image builds and Terraform plans require explicit opt-in:
+
+~~~bash
+python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py execute \\
+  --run-dir ./.cloud-agent/runs/my-app --approve \\
+  --docker-build --terraform-plan
+~~~
+
+Docker builds run with networking disabled, no base-image pull and temporary-image cleanup. Terraform plans run in a temporary source copy with backend and refresh disabled and cloud credential environment variables removed. Terraform provider plugins and external data sources can still execute code, so review Terraform before requesting a plan. Neither check applies infrastructure or deploys anything.
+
+Re-run checks after a committed execution with `orchestrate.py verify --run-dir <run-dir>`. Full evidence is stored in `verification-report.json`; missing tools and warnings remain visible in the report and may make verification partial.
+

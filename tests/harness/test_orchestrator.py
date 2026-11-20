@@ -56,6 +56,22 @@ def plan_for(project: Path, run_dir: Path, skills="app-containerizer,cicd-pipeli
     return orchestrator.create_plan(args)
 
 
+def successful_verification(plan, run_dir, *, docker_build=False, terraform_plan=False):
+    return {
+        "schema_version": "1.0",
+        "run_id": plan["run_id"],
+        "project_root": plan["workflow"]["project_dir"],
+        "status": "completed",
+        "requested_verifications": {
+            "docker_build": docker_build,
+            "terraform_plan": terraform_plan,
+        },
+        "summary": {"FAIL": 0, "NOT_RUN": 0, "PASS": 0, "SKIPPED": 0, "WARNING": 0},
+        "checks": [],
+        "generated_at": "2026-11-19T12:00:00+00:00",
+    }
+
+
 def test_scan_emits_only_bounded_metadata_and_never_env_values(tmp_path):
     project = make_node_project(tmp_path / "app")
     (project / ".env").write_text("DB_PASSWORD=do-not-copy-this\nAPI_TOKEN=secret-value\n", encoding="utf-8")
@@ -448,6 +464,7 @@ def test_resume_recovers_crash_then_restarts_all_skills_from_clean_state(tmp_pat
         }
 
     monkeypatch.setattr(orchestrator, "execute_skill", successful_skill)
+    monkeypatch.setattr(orchestrator, "verify_artifacts", successful_verification)
     args = orchestrator.build_parser().parse_args([
         "resume", "--run-dir", str(run_dir), "--approve", "--overwrite",
     ])
@@ -509,6 +526,7 @@ def test_resume_does_not_require_overwrite_for_interrupted_generated_files(tmp_p
         }
 
     monkeypatch.setattr(orchestrator, "execute_skill", successful_skill)
+    monkeypatch.setattr(orchestrator, "verify_artifacts", successful_verification)
     args = orchestrator.build_parser().parse_args([
         "resume", "--run-dir", str(run_dir), "--approve",
     ])
@@ -592,3 +610,45 @@ def test_execute_rejects_tampered_architecture_profile(tmp_path):
     with pytest.raises(orchestrator.OrchestratorError, match="Architecture profile changed after planning"):
         orchestrator.execute_run(args)
     assert not (project / "Dockerfile").exists()
+
+
+
+def test_verification_failure_rolls_back_generated_artifacts(tmp_path, monkeypatch):
+    project = make_node_project(tmp_path / "verification-failure-app")
+    run_dir = tmp_path / "verification-failure-run"
+    plan_for(project, run_dir)
+
+    def fail_verification(plan, run_dir, *, docker_build=False, terraform_plan=False):
+        return {
+            "schema_version": "1.0",
+            "run_id": plan["run_id"],
+            "project_root": str(project),
+            "status": "failed",
+            "requested_verifications": {
+                "docker_build": docker_build,
+                "terraform_plan": terraform_plan,
+            },
+            "summary": {"FAIL": 1, "NOT_RUN": 0, "PASS": 0, "SKIPPED": 0, "WARNING": 0},
+            "checks": [{
+                "skill": "app-containerizer",
+                "category": "security",
+                "name": "test-security-gate",
+                "status": "FAIL",
+                "tool": "test-scanner",
+                "detail": "Synthetic failure used to test transaction rollback.",
+            }],
+            "generated_at": "2026-11-19T12:00:00+00:00",
+        }
+
+    monkeypatch.setattr(orchestrator, "verify_artifacts", fail_verification)
+    args = orchestrator.build_parser().parse_args([
+        "execute", "--run-dir", str(run_dir), "--approve",
+    ])
+    report = orchestrator.execute_run(args)
+
+    assert report["status"] == "failed"
+    assert report["verification"]["status"] == "failed"
+    assert report["transaction"]["status"] == "rolled_back"
+    assert not (project / "Dockerfile").exists()
+    assert not (project / ".github" / "workflows" / "pipeline.yml").exists()
+    assert (run_dir / "verification-report.json").is_file()

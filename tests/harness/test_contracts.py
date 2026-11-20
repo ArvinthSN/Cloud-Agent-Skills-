@@ -16,6 +16,7 @@ def test_execution_schemas_are_valid_json_and_versioned():
         "execution-state.schema.json",
         "architecture-profile.schema.json",
         "skill-selection.schema.json",
+        "verification-report.schema.json",
     ):
         schema = json.loads((SCHEMAS / name).read_text(encoding="utf-8"))
         assert schema["$schema"].endswith("/2020-12/schema")
@@ -77,3 +78,14 @@ def test_execution_state_contract_covers_lock_recovery_and_resume():
     assert "class ExecutionLock" in source
     assert "def resume_run" in source
     assert "def recover_run" in source
+
+
+
+def test_verification_contract_documents_opt_in_builds_and_statuses():
+    schema = json.loads((SCHEMAS / "verification-report.schema.json").read_text(encoding="utf-8"))
+    assert schema["properties"]["status"]["enum"] == ["completed", "partial", "failed"]
+    assert schema["properties"]["requested_verifications"]["properties"]["docker_build"]["type"] == "boolean"
+    assert schema["properties"]["requested_verifications"]["properties"]["terraform_plan"]["type"] == "boolean"
+    assert schema["properties"]["checks"]["items"]["properties"]["status"]["enum"] == [
+        "PASS", "FAIL", "WARNING", "SKIPPED", "NOT_RUN"
+    ]

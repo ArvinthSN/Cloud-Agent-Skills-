@@ -17,7 +17,7 @@ Generate a project-specific CI pipeline from a reviewed platform template and ve
 | jenkins | Jenkinsfile | Structural checks; Groovy compiler when installed; validate with the configured Jenkins controller |
 | circleci | .circleci/config.yml | YAML and repository policy checks; CircleCI CLI when installed |
 
-All five renderers are integrated. Static validation is not equivalent to a provider-native lint, pipeline execution or deployment.
+All five renderers are integrated. The orchestrator re-runs the static policy validator and any available native validator during artifact verification. Static validation is not equivalent to a provider-native lint, pipeline execution or deployment.
 
 ## Supported application stacks
 - Python with pip, Poetry or uv when the detector finds a real artifact-producing package build.
@@ -34,7 +34,7 @@ All five renderers are integrated. Static validation is not equivalent to a prov
 7. Load only the selected platform and stack reference sections. Render only through scripts/render_pipeline.py.
 8. Preserve existing output. Use --overwrite only after explicit approval.
 9. Run scripts/validate_pipeline.py and native validators when installed. Fix blockers and report remaining warnings and skipped checks.
-10. Report output paths, required secret/variable names, assumptions, unresolved risks and whether native validators ran.
+10. Report output paths, required secret/variable names, assumptions, unresolved risks and whether native validators ran. The orchestrator records unavailable native validators as NOT_RUN.
 
 ## Platform timeout behavior
 
