@@ -9,9 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -148,6 +146,10 @@ def main() -> int:
                 raise RuntimeError("no-new-privileges is not enabled")
             if int(host.get("PidsLimit") or 0) != 64:
                 raise RuntimeError("Container PID limit was not applied")
+            if int(host.get("Memory") or 0) != 128 * 1024 * 1024:
+                raise RuntimeError("Container memory limit was not applied")
+            if int(host.get("NanoCpus") or 0) != 500_000_000:
+                raise RuntimeError("Container CPU limit was not applied")
 
             result["checks"].extend([
                 "health-endpoint",
@@ -173,7 +175,7 @@ def main() -> int:
         result["error"] = str(exc)
     finally:
         run([docker, "rm", "--force", container], timeout=60)
-        if image_built and not args.keep_image:
+        if image_built and (not args.keep_image or result["status"] != "PASS"):
             run([docker, "image", "rm", "--force", args.image_tag], timeout=60)
 
     print(json.dumps(result, indent=2))
