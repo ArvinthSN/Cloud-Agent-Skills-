@@ -62,3 +62,19 @@ def test_node_uses_scanner_start_command(tmp_path):
         "package_manager": "npm",
     })
     assert plan["startup_command"] == ["node", "server.js"]
+
+
+def test_gradle_spring_boot_plan_has_executable_jar_command(tmp_path):
+    plan = analyze(tmp_path, {
+        "project_type": "java",
+        "framework": "spring-boot",
+        "entry_point": "src/main/java/Application.java",
+        "package_manager": "gradle",
+        "dependency_file": "build.gradle",
+        "runtime_version": "17",
+        "build_tool_version": "9.5.1",
+        "gradle_wrapper": True,
+    })
+    assert plan["startup_command"] == ["java", "-jar", "/app/app.jar"]
+    assert plan["build_tool_version"] == "9.5.1"
+    assert plan["gradle_wrapper"] is True
