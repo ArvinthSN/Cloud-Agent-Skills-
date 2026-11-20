@@ -44,6 +44,7 @@ def render(plan: dict) -> str:
             if Path(dep).name != "uv.lock":
                 raise ValueError("uv projects must include uv.lock.")
             return f"""FROM python:{version}-slim
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 RUN pip install --no-cache-dir uv
@@ -61,6 +62,7 @@ CMD {json.dumps(command)}
             if Path(dep).name not in {"poetry.lock", "pyproject.toml"}:
                 raise ValueError("Poetry projects require pyproject.toml and poetry.lock.")
             return f"""FROM python:{version}-slim
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 RUN pip install --no-cache-dir poetry
@@ -80,6 +82,7 @@ CMD {json.dumps(command)}
         else:
             install = f'COPY ["{dep}", "./{Path(dep).name}"]\nCOPY . .\nRUN pip install --no-cache-dir .'
             return f"""FROM python:{version}-slim
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 {install}
@@ -89,6 +92,7 @@ EXPOSE {port}
 CMD {json.dumps(command)}
 """
         return f"""FROM python:{version}-slim
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 {install}
@@ -113,6 +117,7 @@ RUN npm ci
 COPY . .
 RUN npm run build --if-present && npm prune --omit=dev
 FROM node:{version}-bookworm-slim AS runtime
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
@@ -133,6 +138,7 @@ RUN mvn -B -q dependency:go-offline
 COPY src ./src
 RUN mvn -B -DskipTests package
 FROM eclipse-temurin:{version}-jre
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
 COPY --from=build /workspace/target/*.jar /app/app.jar
@@ -152,6 +158,7 @@ RUN gradle --no-daemon bootJar -x test
 # Exclude Spring Boot's plain JAR so only the executable bootJar enters the runtime stage.
 RUN set -eu; jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print -quit)"; test -n "$jar"; cp "$jar" /workspace/app.jar
 FROM eclipse-temurin:{version}-jre
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
 COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar
