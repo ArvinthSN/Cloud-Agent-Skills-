@@ -124,10 +124,9 @@ CMD {json.dumps(command)}
 
     if stack == "java":
         version = _runtime_version(plan.get("runtime_version"), "21")
-        if manager != "maven":
-            raise ValueError(f"Java package manager '{manager}' is not yet supported; Maven projects are required.")
-        _safe_dependency_path(plan.get("dependency_file"), {"pom.xml"})
-        return f"""FROM maven:3.9-eclipse-temurin-{version} AS build
+        if manager == "maven":
+            _safe_dependency_path(plan.get("dependency_file"), {"pom.xml"})
+            return f"""FROM maven:3.9-eclipse-temurin-{version} AS build
 WORKDIR /workspace
 COPY pom.xml ./
 RUN mvn -B -q dependency:go-offline
@@ -141,61 +140,26 @@ USER app
 EXPOSE {port}
 ENTRYPOINT {json.dumps(command)}
 """
-
-    raise ValueError(f"Unsupported or unknown stack: {stack}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--path", required=True)
-    parser.add_argument("--plan", required=True)
-    parser.add_argument("--approve", action="store_true")
-    parser.add_argument("--overwrite", action="store_true")
-    args = parser.parse_args()
-
-    repo = Path(args.path).resolve()
-    if not repo.is_dir():
-        parser.error("--path must be an existing directory")
-    try:
-        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-        dockerfile = render(plan)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        parser.error(f"Cannot generate Dockerfile: {exc}")
-    if not args.approve:
-        parser.error("No files written; re-run with --approve after reviewing the plan.")
-
-    targets = [repo / "Dockerfile", repo / ".dockerignore"]
-    existing = [target.name for target in targets if target.exists()]
-    if existing and not args.overwrite:
-        parser.error(f"Existing files preserved: {existing}; use --overwrite only after review.")
-
-    ignore = """.git
-.venv
-venv
-__pycache__
-.pytest_cache
-.mypy_cache
-.ruff_cache
-node_modules
-coverage
-dist
-build
-target
-.idea
-.vscode
-*.log
-.env
-.env.*
-!.env.example
-!.env.sample
-*.pem
-*.key
-id_rsa
+        if manager == "gradle":
+            # Gradle builds need a Gradle-capable JDK image. Use the version
+            # declared by the checked-in wrapper when available, otherwise a
+            # conservative supported default; never execute Gradle while scanning.
+            _safe_dependency_path(plan.get("dependency_file"), {"build.gradle", "build.gradle.kts"})
+            gradle_version = _runtime_version(plan.get("build_tool_version"), "8.14")
+            return f"""FROM gradle:{gradle_version}-jdk{version} AS build
+WORKDIR /workspace
+COPY . .
+RUN gradle --no-daemon bootJar -x test
+# Exclude the plain JAR produced by Spring Boot so the runtime receives the
+# executable bootJar artifact. Fail the image build if no executable JAR exists.
+RUN set -eu; jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print -quit)"; test -n "$jar"; cp "$jar" /workspace/app.jar
+FROM eclipse-temurin:{version}-jre
+WORKDIR /app
+RUN groupadd --system app && useradd --system --gid app --create-home app
+COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar
+USER app
+EXPOSE {port}
+ENTRYPOINT {json.dumps(command)}
 """
-    (repo / "Dockerfile").write_text(dockerfile, encoding="utf-8")
-    (repo / ".dockerignore").write_text(ignore, encoding="utf-8")
-    print(json.dumps({"generated": [str(target) for target in targets]}, indent=2))
+        raise ValueError(f"Java package manager '{manager}' is not supported; Maven or Gradle is required.")
 
-
-if __name__ == "__main__":
-    main()
