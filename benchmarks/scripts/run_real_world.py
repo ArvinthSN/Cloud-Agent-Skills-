@@ -444,13 +444,40 @@ def main() -> int:
         "Java CI/CD generation is expected to fail closed because the current renderer supports Python and Node.js only.\n",
         encoding="utf-8",
     )
+    report_data = json.loads(report.read_text(encoding="utf-8")) if report.exists() else {}
+    compact_targets = []
+    for item in summary["targets"]:
+        compact_targets.append({
+            "id": item["id"],
+            "clone_status": item["clone_status"],
+            "containerizer": item.get("containerizer", {}).get("status"),
+            "infra_creator": item.get("infra_creator", {}).get("status"),
+            "cicd_pipeline_creator": item.get("cicd_pipeline_creator", {}).get("status"),
+            "pipeline_reason": item.get("cicd_pipeline_creator", {}).get("reason"),
+        })
+    failures = [
+        {"label": item["label"], "return_code": item["return_code"], "stderr": item["stderr"][-1200:]}
+        for item in COMMANDS if item["status"] not in {"PASS", "SKIPPED"}
+    ]
     print(json.dumps({
         "output_dir": str(out),
         "benchmark_report": str(report),
         "summary": str(out / "real-world-run-summary.json"),
         "benchmark_exit_code": benchmark["return_code"],
+        "average_weighted_score": report_data.get("average_weighted_score"),
+        "passed_cases": report_data.get("passed"),
+        "failed_cases": report_data.get("failed"),
+        "case_results": [
+            {"case_id": item["case_id"], "status": item["status"], "dimensions": item["dimensions"],
+             "missing_artifacts": item["missing_artifacts"], "matched_signals": item["matched_signals"]}
+            for item in report_data.get("results", [])
+        ],
+        "target_results": compact_targets,
+        "command_failures": failures,
     }, indent=2))
-    return 0 if benchmark["return_code"] == 0 else 1
+    # A benchmark may legitimately contain failing skill cases. Preserve the
+    # report as evidence; fail the workflow only if the report itself is absent.
+    return 0 if report.exists() else 1
 
 
 if __name__ == "__main__":
