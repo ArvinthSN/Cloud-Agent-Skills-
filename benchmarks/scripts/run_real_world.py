@@ -179,7 +179,7 @@ def run_containerizer(target: dict[str, Any], repo: Path, app_dir: Path, out: Pa
     write_case_metadata(case_dir, first_hash, second_hash, elapsed)
     validation = run(
         f"{target['id']}: container static validation",
-        [PY, skill / "validate_container.py", "--path", app_dir, "--json"],
+        [PY, skill / "validate_container.py", "--path", app_dir],
     )
     return {
         "status": "PASS" if first["return_code"] == 0 and second["return_code"] == 0 else "FAIL",
@@ -308,10 +308,9 @@ def run_orchestrator(repo: Path, out: Path) -> dict[str, Any]:
     plan = run(
         "fastapi-full-stack: orchestrator plan",
         [PY, script, "plan", "--project", repo,
-         "--goal", "Containerize the backend, create a GitHub Actions CI pipeline, and prepare AWS Terraform infrastructure",
-         "--skills", "app-containerizer,cicd-pipeline-creator,infra-creator",
-         "--provider", "aws", "--platform", "github", "--project-dir", "backend",
-         "--run-dir", run_dir],
+         "--goal", "Containerize this Spring Boot application and prepare AWS Terraform infrastructure",
+         "--skills", "app-containerizer,infra-creator",
+         "--provider", "aws", "--run-dir", run_dir],
     )
     if plan["return_code"] != 0:
         return {"status": "FAIL", "plan": plan}
@@ -336,10 +335,10 @@ def make_dataset(path: Path) -> None:
     add("spring-petclinic-container", "container", "java-spring-maven",
         ["Dockerfile", ".dockerignore"], ["FROM", "WORKDIR", "USER", "EXPOSE", "ENTRYPOINT"])
     add("spring-petclinic-infra", "infra", "java-spring-maven-aws",
-        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/README.md"],
+        ["infra/main.tf", "infra/variables.tf", "infra/providers.tf", "infra/versions.tf", "infra/terraform.tfvars.example"],
         ["module", "container_image", "provider", "terraform"])
     add("fastapi-full-stack-container", "container", "python-fastapi",
-        ["Dockerfile", ".dockerignore"], ["FROM", "WORKDIR", "USER", "EXPOSE", "CMD"])
+        ["Dockerfile", ".dockerignore"], ["FROM", "WORKDIR", "USER", "EXPOSE", "CMD", "python:3.14-slim"])
     add("fastapi-full-stack-pipeline", "cicd", "python-uv",
         [".github/workflows/pipeline.yml", "PIPELINE_NOTES.md"],
         ["name:", "jobs:", "permissions:", "timeout-minutes:"])
@@ -414,7 +413,7 @@ def main() -> int:
             target_result["containerizer"] = run_containerizer(target, repo, app_dir, target_out)
             target_result["infra_creator"] = run_infra(target, repo, target_out)
             target_result["cicd_pipeline_creator"] = run_pipeline(target, repo, target_out)
-            if target["id"] == "fastapi-full-stack":
+            if target["id"] == "spring-sample-web-app":
                 summary["orchestrator"] = run_orchestrator(repo, target_out)
         summary["targets"].append(target_result)
 
@@ -456,7 +455,7 @@ def main() -> int:
             "pipeline_reason": item.get("cicd_pipeline_creator", {}).get("reason"),
         })
     failures = [
-        {"label": item["label"], "return_code": item["return_code"], "stderr": item["stderr"][-1200:]}
+        {"label": item["label"], "return_code": item["return_code"], "stdout": item["stdout"][-1200:], "stderr": item["stderr"][-1200:]}
         for item in COMMANDS if item["status"] not in {"PASS", "SKIPPED"}
     ]
     print(json.dumps({
