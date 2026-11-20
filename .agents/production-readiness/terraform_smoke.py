@@ -41,7 +41,7 @@ def main() -> int:
     fixture.mkdir(exist_ok=True)
     (fixture / "main.tf").write_text(
         'terraform {\n  required_version = ">= 1.8.0, < 2.0.0"\n}\n\n'
-        'variable "service_name" {\n  type = string\n  default = "readiness-smoke"\n}\n\n'
+        'variable "service_name" {\n  type    = string\n  default = "readiness-smoke"\n}\n\n'
         'output "service_name" {\n  value = var.service_name\n}\n',
         encoding="utf-8",
     )
