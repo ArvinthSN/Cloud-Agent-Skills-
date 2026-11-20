@@ -8,6 +8,7 @@ resource "google_sql_database_instance" "this" {
     tier = var.environment == "prod" ? "db-custom-2-7680" : "db-f1-micro"
     ip_configuration {
       ipv4_enabled    = false
+      ssl_mode        = "ENCRYPTED_ONLY"
       private_network = var.network_id
     }
     backup_configuration {
