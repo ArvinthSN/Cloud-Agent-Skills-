@@ -106,19 +106,42 @@ def copy_case_files(case_dir: Path, files: list[tuple[Path, str]]) -> None:
             shutil.copy2(source, destination)
 
 
-def write_case_metadata(case_dir: Path, first_hash: str | None, second_hash: str | None, elapsed: float) -> None:
+def write_case_metadata(
+    case_dir: Path,
+    first_hash: str | None,
+    second_hash: str | None,
+    elapsed: float,
+    validation_passed: bool | None = None,
+) -> None:
     case_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "first_run_sha256": first_hash,
+        "second_run_sha256": second_hash,
+        "elapsed_seconds": round(elapsed, 4),
+    }
+    if validation_passed is not None:
+        metadata["validation_passed"] = validation_passed
     (case_dir / "benchmark-metadata.json").write_text(
-        json.dumps(
-            {
-                "first_run_sha256": first_hash,
-                "second_run_sha256": second_hash,
-                "elapsed_seconds": round(elapsed, 4),
-            },
-            indent=2,
-        ) + "\n",
+        json.dumps(metadata, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def validator_passed(result: dict[str, Any]) -> bool:
+    if result.get("return_code") != 0:
+        return False
+    try:
+        payload = json.loads(result.get("stdout") or "")
+    except (TypeError, json.JSONDecodeError):
+        return result.get("return_code") == 0
+    if isinstance(payload, list):
+        return not any(
+            isinstance(item, dict) and item.get("status") == "FAIL"
+            for item in payload
+        )
+    if isinstance(payload, dict) and "success" in payload:
+        return payload.get("success") is True
+    return result.get("return_code") == 0
 
 
 def clone_target(target: dict[str, Any], destination: Path) -> bool:
@@ -181,13 +204,16 @@ def run_containerizer(target: dict[str, Any], repo: Path, app_dir: Path, out: Pa
         f"{target['id']}: container static validation",
         [PY, skill / "validate_container.py", "--path", app_dir],
     )
+    validation_ok = validator_passed(validation)
+    write_case_metadata(case_dir, first_hash, second_hash, elapsed, validation_ok)
     return {
-        "status": "PASS" if first["return_code"] == 0 and second["return_code"] == 0 else "FAIL",
+        "status": "PASS" if first["return_code"] == 0 and second["return_code"] == 0 and validation_ok else "FAIL",
         "scan": scan_result,
         "analysis": analyze,
         "generation_run_1": first,
         "generation_run_2": second,
         "validation": validation,
+        "validation_passed": validation_ok,
         "first_hash": first_hash,
         "second_hash": second_hash,
         "elapsed_seconds": round(elapsed, 4),
@@ -236,16 +262,19 @@ def run_infra(target: dict[str, Any], repo: Path, out: Path) -> dict[str, Any]:
     validation = run(
         f"{target['id']}: Terraform static validation",
         [PY, skill / "validate_terraform.py", first_dir, "--json"],
-    ) if first["return_code"] == 0 else {"status": "SKIPPED", "return_code": None}
+    ) if first["return_code"] == 0 else {"status": "SKIPPED", "return_code": None, "stdout": ""}
+    validation_ok = validator_passed(validation)
+    write_case_metadata(case_dir, first_hash, second_hash, elapsed, validation_ok)
     architecture = json.loads(arch.read_text(encoding="utf-8")) if arch.exists() else None
     plan = json.loads(first["stdout"]) if first["return_code"] == 0 and first["stdout"].lstrip().startswith("{") else None
     return {
-        "status": "PASS" if first["return_code"] == 0 and second["return_code"] == 0 else "FAIL",
+        "status": "PASS" if first["return_code"] == 0 and second["return_code"] == 0 and validation_ok else "FAIL",
         "scan": scan_result,
         "analysis": analyze,
         "generation_run_1": first,
         "generation_run_2": second,
         "validation": validation,
+        "validation_passed": validation_ok,
         "architecture": architecture,
         "plan": plan,
         "first_hash": first_hash,
@@ -291,8 +320,10 @@ def run_pipeline(target: dict[str, Any], repo: Path, out: Path) -> dict[str, Any
         [PY, ROOT / ".agents/skills/cicd-pipeline-creator/scripts/validate_pipeline.py",
          first_dir / "pipeline.yml", "--json"],
     )
+    validation_ok = validator_passed(validation)
+    write_case_metadata(case_dir, first_hash, second_hash, elapsed, validation_ok)
     return {
-        "status": "PASS" if second["return_code"] == 0 else "FAIL",
+        "status": "PASS" if second["return_code"] == 0 and validation_ok else "FAIL",
         "generation_run_1": first,
         "generation_run_2": second,
         "validation": validation,
@@ -388,7 +419,8 @@ def main() -> int:
         "safety": {
             "target_application_code_executed": False,
             "docker_builds": False,
-            "terraform_init_or_plan": False,
+            "terraform_init_in_isolated_copy": True,
+            "terraform_plan": False,
             "terraform_apply_or_destroy": False,
             "cloud_resources_created": False,
             "third_party_repositories_modified": False,
@@ -435,7 +467,8 @@ def main() -> int:
         "It records generated artifacts, static validation, deterministic output hashes, and measured generation time.\n\n"
         "## Safety boundary\n\n"
         "- No application code, project test scripts, Dockerfile instructions, or package lifecycle scripts were executed.\n"
-        "- No Docker build, Terraform init/plan/apply/destroy, cloud provisioning, image push, or deployment was performed.\n"
+        "- Terraform fmt/init/validate ran only in isolated temporary copies with backend disabled; no Terraform plan/apply/destroy was performed.\n"
+
         "- All generated files were written only into ephemeral GitHub Actions workspaces. Public source repositories were not modified.\n\n"
         "## Interpretation\n\n"
         "The benchmark is a deterministic, rule-based artifact baseline. It is not a runtime, vulnerability, performance, or production-readiness certification. "
@@ -468,6 +501,7 @@ def main() -> int:
         "failed_cases": report_data.get("failed"),
         "case_results": [
             {"case_id": item["case_id"], "status": item["status"], "dimensions": item["dimensions"],
+             "validation_passed": item.get("validation_passed"),
              "missing_artifacts": item["missing_artifacts"], "matched_signals": item["matched_signals"]}
             for item in report_data.get("results", [])
         ],
