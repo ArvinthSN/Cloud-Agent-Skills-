@@ -228,3 +228,23 @@ def test_generated_terraform_passes_native_validation_when_cli_available(tmp_pat
     assert result.init_ok is True, json.dumps(result.to_dict(), indent=2)
     assert result.validate_ok is True, json.dumps(result.to_dict(), indent=2)
     assert result.success is True, json.dumps(result.to_dict(), indent=2)
+
+@pytest.mark.parametrize("provider", SUPPORTED_PROVIDERS)
+def test_generated_terraform_templates_use_valid_multiline_hcl(tmp_path, provider):
+    """HCL uses newlines between block attributes; semicolons are not separators."""
+    scan = scan_repository(EXAMPLES / "python-fastapi").to_dict()
+    arch = analyze(scan).to_dict()
+    plan = build_plan(scan, arch, provider)
+    output = tmp_path / provider / "infra"
+    generate_project(output, plan, project_name="hcl-syntax-check")
+
+    terraform_files = sorted(output.rglob("*.tf"))
+    assert terraform_files, "Expected generated Terraform files"
+
+    invalid_lines = [
+        f"{path.relative_to(output)}:{line_number}: {line}"
+        for path in terraform_files
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if ";" in line and not line.lstrip().startswith("#")
+    ]
+    assert not invalid_lines, "Invalid HCL statement separators found:\\n" + "\\n".join(invalid_lines)
