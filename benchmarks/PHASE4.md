@@ -19,7 +19,7 @@ python .agents/skills/cloud-engineering-orchestrator/scripts/orchestrate.py repa
   --attempts-used 0
 ~~~
 
-The controller proposes at most two retries (one by default) and only for explicit transient tool/network failure markers. Security, secret and policy failures are never retryable. Unknown or deterministic validation failures escalate. The command writes `repair-plan.json`; it does not edit files, run shell commands, or bypass the existing approval, transaction and verification gates. After an approved repair/retry, run verification again.
+The controller proposes at most two retries across the entire execution run (one by default), not per failed check, and only for explicit transient tool/network failure markers. Security, secret and policy failures are never retryable. Unknown or deterministic validation failures escalate. The command writes `repair-plan.json`; it does not edit files, run shell commands, or bypass the existing approval, transaction and verification gates. After an approved repair/retry, run verification again.
 
 ## Benchmark regression gate
 
