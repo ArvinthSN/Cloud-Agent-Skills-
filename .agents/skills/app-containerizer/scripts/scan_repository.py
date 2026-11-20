@@ -95,15 +95,15 @@ def scan(repo: Path) -> dict:
         if pyproject_path:
             pyproject_text = _read_text(pyproject_path)
             requires_match = re.search(
-                r"(?m)^\\s*requires-python\\s*=\\s*['\"]([^'\"]+)['\"]",
+                r"(?m)^\s*requires-python\s*=\s*['\"]([^'\"]+)['\"]",
                 pyproject_text,
             )
             poetry_match = re.search(
-                r"(?m)^\\s*python\\s*=\\s*['\"]([^'\"]+)['\"]",
+                r"(?m)^\s*python\s*=\s*['\"]([^'\"]+)['\"]",
                 pyproject_text,
             )
             runtime_constraint = (requires_match or poetry_match).group(1) if (requires_match or poetry_match) else ""
-            version_match = re.search(r"(?:>=|~=|==|>)\\s*(3\\.\\d+)", runtime_constraint)
+            version_match = re.search(r"(?:>=|~=|==|>)\s*(3\.\d+)", runtime_constraint)
             if version_match:
                 runtime = version_match.group(1)
                 if runtime_constraint.lstrip().startswith(">") and not runtime_constraint.lstrip().startswith(">="):
@@ -112,7 +112,7 @@ def scan(repo: Path) -> dict:
                 runtime_source = "pyproject.toml"
             else:
                 # Upper-bound-only declarations still constrain the safe choice.
-                upper_match = re.search(r"(?:<=|<)\\s*(3\\.\\d+)", runtime_constraint)
+                upper_match = re.search(r"(?:<=|<)\s*(3\.\d+)", runtime_constraint)
                 runtime = upper_match.group(1) if upper_match else "3.12"
                 runtime_source = "pyproject.toml" if upper_match else "default"
         else:
@@ -176,9 +176,9 @@ def scan(repo: Path) -> dict:
         runtime = "21"
         build_text = _read_text(repo / dependency)
         java_match = (
-            re.search(r"JavaLanguageVersion\\.of\\(\\s*(\\d+)\\s*\\)", build_text)
-            or re.search(r"VERSION_(\\d+)", build_text)
-            or re.search(r"sourceCompatibility\\s*=\\s*['\"]?(?:VERSION_)?(\\d+)", build_text)
+            re.search(r"JavaLanguageVersion\.of\(\s*(\d+)\s*\)", build_text)
+            or re.search(r"VERSION_(\d+)", build_text)
+            or re.search(r"sourceCompatibility\s*=\s*['\"]?(?:VERSION_)?(\d+)", build_text)
         )
         if java_match:
             runtime = java_match.group(1)
@@ -190,7 +190,7 @@ def scan(repo: Path) -> dict:
         gradle_wrapper = bool(wrapper_properties and "gradlew" in lowered)
         if wrapper_properties:
             wrapper_text = _read_text(repo / wrapper_properties)
-            gradle_match = re.search(r"gradle-(\\d+(?:\\.\\d+)+)-(?:bin|all)\\.zip", wrapper_text)
+            gradle_match = re.search(r"gradle-(\d+(?:\.\d+)+)-(?:bin|all)\.zip", wrapper_text)
             if gradle_match:
                 build_tool_version = gradle_match.group(1)
 
