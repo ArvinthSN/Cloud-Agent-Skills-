@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / ".agents"))
 sys.path.insert(0, str(ROOT / "benchmarks" / "scripts"))
@@ -80,6 +82,48 @@ def test_regression_gate_rejects_changed_case_sets(tmp_path):
     changed = _report(95, 100)
     changed["results"][0]["case_id"] = "different-case"
     current.write_text(json.dumps(changed))
-    import pytest
     with pytest.raises(ValueError, match="same case IDs"):
         compare_reports(baseline, current)
+
+
+@pytest.mark.parametrize("bad_value", [None, True, "100", float("nan"), float("inf"), -1, 101])
+def test_regression_gate_rejects_missing_or_invalid_correctness_metrics(tmp_path, bad_value):
+    baseline, current = tmp_path / "base.json", tmp_path / "current.json"
+    baseline.write_text(json.dumps(_report(95, 100)))
+    current.write_text(json.dumps(_report(95, bad_value)))
+    with pytest.raises(ValueError, match="correctness"):
+        compare_reports(baseline, current)
+
+
+@pytest.mark.parametrize("bad_score", [None, True, "95", float("nan"), float("inf"), -1, 101])
+def test_regression_gate_rejects_missing_or_invalid_aggregate_scores(tmp_path, bad_score):
+    baseline, current = tmp_path / "base.json", tmp_path / "current.json"
+    baseline.write_text(json.dumps(_report(95, 100)))
+    current.write_text(json.dumps(_report(bad_score, 100)))
+    with pytest.raises(ValueError, match="average_weighted_score"):
+        compare_reports(baseline, current)
+
+
+def test_regression_gate_rejects_malformed_findings_instead_of_ignoring_them(tmp_path):
+    baseline, current = tmp_path / "base.json", tmp_path / "current.json"
+    baseline.write_text(json.dumps(_report(95, 100)))
+    current.write_text(json.dumps(_report(95, 100, findings=[{"rule": "secret"}])))
+    with pytest.raises(ValueError, match="security_findings"):
+        compare_reports(baseline, current)
+
+
+def test_regression_gate_rejects_non_object_case_entries(tmp_path):
+    baseline, current = tmp_path / "base.json", tmp_path / "current.json"
+    baseline.write_text(json.dumps(_report(95, 100)))
+    current.write_text(json.dumps({"average_weighted_score": 95, "results": [None]}))
+    with pytest.raises(ValueError, match="must be an object"):
+        compare_reports(baseline, current)
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), -1, True])
+def test_regression_gate_rejects_invalid_thresholds(tmp_path, threshold):
+    baseline, current = tmp_path / "base.json", tmp_path / "current.json"
+    baseline.write_text(json.dumps(_report(95, 100)))
+    current.write_text(json.dumps(_report(95, 100)))
+    with pytest.raises(ValueError, match="thresholds"):
+        compare_reports(baseline, current, max_score_drop=threshold)
