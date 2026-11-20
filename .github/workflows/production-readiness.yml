@@ -109,15 +109,25 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Scan repository history and working tree with Gitleaks
+      - name: Scan repository working tree with Gitleaks
         run: |
-          docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.24.2 dir \
-            --redact --no-banner --exit-code 1 /repo
+          mkdir -p artifacts/security
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/artifacts/security:/reports" zricethezav/gitleaks:v8.24.2 dir \
+            --redact --no-banner --exit-code 1 --report-format json --report-path /reports/gitleaks.json /repo
       - name: Scan repository IaC and configuration with Trivy
         run: |
-          docker run --rm -v "$PWD:/repo:ro" aquasec/trivy:0.58.2 fs /repo \
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/artifacts/security:/reports" aquasec/trivy:0.58.2 fs /repo \
             --scanners misconfig,secret --severity HIGH,CRITICAL --exit-code 1 \
+            --format json --output /reports/trivy-filesystem.json \
             --skip-dirs .git --skip-dirs .venv --skip-dirs node_modules
+      - name: Upload repository security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-readiness-security-${{ github.run_id }}
+          path: artifacts/security/
+          if-no-files-found: warn
+          retention-days: 30
 
   release-gate:
     name: Production readiness release gate
