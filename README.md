@@ -135,3 +135,10 @@ A 24-case benchmark dataset covers Python/Node/Java/Go/Rust containerization, CI
 ## Phase 4: optimization and continuous improvement
 
 Execution telemetry, cache observability, approval-gated bounded repair plans, and a benchmark regression gate are documented in [`benchmarks/PHASE4.md`](benchmarks/PHASE4.md). Telemetry uses metadata-only token estimates; it does not capture source or artifact contents. Security and policy failures are never eligible for automatic retry.
+
+
+## Phase 5: Production Readiness v1.0
+
+The `production-readiness.yml` workflow adds evidence beyond static generation: a generated Dockerfile is built and its container is started under restrictive runtime settings; Terraform CLI fmt/init/validate/plan is exercised against a provider-free fixture; Trivy scans the built image and repository configuration; Gitleaks scans for secrets; and a CycloneDX image SBOM is retained. All jobs are required by the workflow's release gate. See [Production Readiness v1.0](docs/PRODUCTION_READINESS_V1.md) for scope and limitations.
+
+This workflow does not apply Terraform, provision cloud infrastructure, deploy to a provider, push images or publish a production release. Provider-specific deployment rehearsal, provenance signing, observability, load/resilience and recovery evidence remain future gates.

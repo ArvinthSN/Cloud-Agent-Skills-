@@ -30,3 +30,7 @@ variable "allowed_security_group_ids" {
   type = list(string)
   default = []
 }
+variable "allowed_egress_cidrs" {
+  type    = list(string)
+  default = ["10.0.0.0/16"]
+}

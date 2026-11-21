@@ -30,6 +30,7 @@ def test_generate_fastapi_dockerfile(tmp_path):
     assert result.returncode == 0, result.stderr
     dockerfile = (tmp_path / "Dockerfile").read_text(encoding="utf-8")
     assert "USER app" in dockerfile
+    assert "apt-get update && apt-get upgrade -y" in dockerfile
     assert "pip install --no-cache-dir -r requirements.txt" in dockerfile
     assert 'CMD ["uvicorn", "main:app"' in dockerfile
 
